@@ -1,0 +1,24 @@
+[project]
+name = "microgrid-ems"
+version = "0.2.0"
+description = "Forecast-driven ML energy management for a rural solar-battery-diesel microgrid (Tamale, Ghana)"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.1",
+    "scipy>=1.11",
+    "scikit-learn>=1.4",
+    "xgboost>=2.0",
+    "torch>=2.2",
+    "matplotlib>=3.8",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+filterwarnings = ["error::RuntimeWarning"]
+
+[tool.setuptools.packages.find]
+include = ["microgrid*"]

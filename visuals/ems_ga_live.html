@@ -1,0 +1,1024 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EMS + Genetic Algorithm — Live Decisions</title>
+  <style>
+    :root {
+      --bg: #070b14;
+      --panel: rgba(12, 18, 32, 0.94);
+      --border: rgba(100, 160, 255, 0.2);
+      --text: #e8eef9;
+      --muted: #8b9bb8;
+      --accent: #38bdf8;
+      --seed: #f5c542;
+      --elite: #4ade80;
+      --mut: #f472b6;
+      --cross: #a78bfa;
+      --commit: #fb923c;
+      --diesel: #f87171;
+      --pv: #f5c542;
+      --load: #a78bfa;
+      --bat: #4ade80;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      height: 100%; background: var(--bg); color: var(--text);
+      font-family: "Segoe UI", system-ui, sans-serif; overflow: hidden;
+    }
+    body {
+      display: grid;
+      grid-template-rows: auto 1fr auto;
+      gap: 10px; padding: 12px;
+    }
+
+    header {
+      display: flex; align-items: center; justify-content: space-between; gap: 16px;
+      flex-wrap: wrap;
+    }
+    header h1 { font-size: 15px; font-weight: 650; letter-spacing: 0.01em; }
+    header p { font-size: 12px; color: var(--muted); max-width: 520px; line-height: 1.4; }
+    .controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+    button, .chip {
+      font-size: 12px; padding: 7px 12px; border-radius: 8px; cursor: pointer;
+      border: 1px solid var(--border); background: rgba(255,255,255,0.04); color: var(--text);
+    }
+    button:hover { background: rgba(56, 189, 248, 0.12); }
+    button.active { border-color: var(--accent); color: var(--accent); background: rgba(56,189,248,0.15); }
+    label.ctl { font-size: 11px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
+    input[type=range] { width: 90px; accent-color: var(--accent); }
+
+    /* Pipeline stages */
+    #pipeline {
+      display: flex; gap: 6px; align-items: stretch; flex-wrap: wrap;
+    }
+    .stage {
+      flex: 1; min-width: 110px; padding: 10px 12px; border-radius: 10px;
+      background: var(--panel); border: 1px solid var(--border);
+      transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+    }
+    .stage.on {
+      border-color: var(--accent);
+      box-shadow: 0 0 20px rgba(56, 189, 248, 0.2);
+      transform: translateY(-1px);
+    }
+    .stage .n {
+      font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em;
+    }
+    .stage .t { font-size: 13px; font-weight: 600; margin-top: 2px; }
+    .stage .d { font-size: 10.5px; color: var(--muted); margin-top: 3px; line-height: 1.3; }
+    .arrow { color: var(--muted); align-self: center; font-size: 14px; opacity: 0.5; }
+
+    main {
+      display: grid;
+      grid-template-columns: 1.15fr 1fr 0.95fr;
+      grid-template-rows: 1fr 1fr;
+      gap: 10px; min-height: 0;
+    }
+    .panel {
+      background: var(--panel); border: 1px solid var(--border); border-radius: 12px;
+      padding: 12px; display: flex; flex-direction: column; min-height: 0;
+      box-shadow: 0 8px 28px rgba(0,0,0,0.3);
+    }
+    .panel h2 {
+      font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--muted); margin-bottom: 8px; display: flex; justify-content: space-between;
+      align-items: center;
+    }
+    .panel h2 span.val { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 600; text-transform: none; letter-spacing: 0; font-size: 12px; }
+    canvas { width: 100%; height: 100%; min-height: 0; flex: 1; border-radius: 6px; }
+
+    #ga-panel { grid-row: 1 / 3; }
+    #decision-log {
+      font-size: 11px; line-height: 1.45; color: var(--muted); overflow: auto;
+      flex: 1; font-family: ui-monospace, "Cascadia Code", Consolas, monospace;
+    }
+    #decision-log .line { padding: 2px 0; border-bottom: 1px solid rgba(255,255,255,0.04); }
+    #decision-log .line b { color: var(--text); font-weight: 600; }
+    #decision-log .line .tag {
+      display: inline-block; font-size: 9px; padding: 1px 5px; border-radius: 4px;
+      margin-right: 5px; font-family: "Segoe UI", sans-serif; letter-spacing: 0.04em;
+    }
+    .tag.seed { background: rgba(245,197,66,0.15); color: var(--seed); }
+    .tag.elite { background: rgba(74,222,128,0.15); color: var(--elite); }
+    .tag.mut { background: rgba(244,114,182,0.15); color: var(--mut); }
+    .tag.cross { background: rgba(167,139,250,0.15); color: var(--cross); }
+    .tag.commit { background: rgba(251,146,60,0.15); color: var(--commit); }
+    .tag.eval { background: rgba(56,189,248,0.15); color: var(--accent); }
+    .tag.replay { background: rgba(248,113,113,0.12); color: var(--diesel); }
+
+    footer {
+      display: flex; gap: 16px; flex-wrap: wrap; align-items: center;
+      font-size: 11px; color: var(--muted); padding: 4px 2px;
+    }
+    footer b { color: var(--text); }
+    .legend { display: flex; gap: 12px; flex-wrap: wrap; }
+    .legend i {
+      display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 4px;
+    }
+
+    #ops {
+      display: flex; gap: 6px; margin-bottom: 8px; flex-wrap: wrap;
+    }
+    .op {
+      font-size: 10px; padding: 4px 8px; border-radius: 999px;
+      border: 1px solid var(--border); color: var(--muted); transition: all 0.15s;
+    }
+    .op.flash {
+      color: #fff; border-color: transparent;
+      box-shadow: 0 0 12px currentColor;
+    }
+    .op.flash.seed { background: var(--seed); color: #1a1200; }
+    .op.flash.elite { background: var(--elite); color: #052e16; }
+    .op.flash.cross { background: var(--cross); }
+    .op.flash.mut { background: var(--mut); }
+    .op.flash.eval { background: var(--accent); color: #082f49; }
+    .op.flash.commit { background: var(--commit); color: #431407; }
+
+    @media (max-width: 1100px) {
+      main { grid-template-columns: 1fr 1fr; grid-template-rows: auto; }
+      #ga-panel { grid-row: auto; min-height: 280px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>Forecast-driven EMS · Genetic algorithm decisions</h1>
+      <p>
+        Rolling 24 h plan, re-solved every 6 h. Population of battery + diesel genomes
+        evolves in real time — merit-order seed → tournament → crossover → mutation → elite keep.
+      </p>
+    </div>
+    <div class="controls">
+      <button type="button" id="btn-play" class="active">Pause</button>
+      <button type="button" id="btn-step">Step gen</button>
+      <button type="button" id="btn-block">New block</button>
+      <label class="ctl">Speed <input type="range" id="speed" min="1" max="40" value="18" /></label>
+      <span class="chip" id="speed-label">—</span>
+    </div>
+  </header>
+
+  <div id="pipeline">
+    <div class="stage" data-stage="forecast"><div class="n">1</div><div class="t">Forecast</div><div class="d">PV + load, 24 h horizon</div></div>
+    <div class="arrow">→</div>
+    <div class="stage" data-stage="seed"><div class="n">2</div><div class="t">Seed GA</div><div class="d">70% merit-order + jitter</div></div>
+    <div class="arrow">→</div>
+    <div class="stage" data-stage="evolve"><div class="n">3</div><div class="t">Evolve</div><div class="d">Tournament · crossover · mutate</div></div>
+    <div class="arrow">→</div>
+    <div class="stage" data-stage="commit"><div class="n">4</div><div class="t">Commit</div><div class="d">Freeze first 6 h battery plan</div></div>
+    <div class="arrow">→</div>
+    <div class="stage" data-stage="replay"><div class="n">5</div><div class="t">Replay</div><div class="d">Against ground-truth PV/load</div></div>
+  </div>
+
+  <main>
+    <section class="panel" id="ga-panel">
+      <h2>GA population · battery genomes <span class="val" id="gen-label">gen 0 / 60</span></h2>
+      <div id="ops">
+        <span class="op seed" id="op-seed">seed</span>
+        <span class="op elite" id="op-elite">elite</span>
+        <span class="op cross" id="op-cross">crossover</span>
+        <span class="op mut" id="op-mut">mutation</span>
+        <span class="op eval" id="op-eval">evaluate</span>
+        <span class="op commit" id="op-commit">commit</span>
+      </div>
+      <canvas id="pop-canvas"></canvas>
+      <div style="display:flex;gap:12px;margin-top:6px;font-size:10px;color:var(--muted)">
+        <span><i style="background:var(--seed);width:8px;height:8px;display:inline-block;border-radius:2px"></i> seed / jitter</span>
+        <span><i style="background:var(--elite);width:8px;height:8px;display:inline-block;border-radius:2px"></i> elite</span>
+        <span><i style="background:#64748b;width:8px;height:8px;display:inline-block;border-radius:2px"></i> random / child</span>
+        <span>rows = individuals · cols = hour 0–23 · colour = charge↔discharge</span>
+      </div>
+    </section>
+
+    <section class="panel">
+      <h2>Fitness convergence <span class="val" id="fit-label">—</span></h2>
+      <canvas id="fit-canvas"></canvas>
+    </section>
+
+    <section class="panel">
+      <h2>Best plan (24 h) <span class="val" id="plan-label">—</span></h2>
+      <canvas id="plan-canvas"></canvas>
+    </section>
+
+    <section class="panel">
+      <h2>Decision log <span class="val" id="block-label">block 0</span></h2>
+      <div id="decision-log"></div>
+    </section>
+
+    <section class="panel">
+      <h2>Commit window vs replay <span class="val" id="commit-label">—</span></h2>
+      <canvas id="commit-canvas"></canvas>
+    </section>
+  </main>
+
+  <footer>
+    <div>
+      <b>EMS:</b> horizon 24 h · commit 6 h · diesel follows residual deficit ·
+      unmet penalty ~950× diesel cost
+    </div>
+    <div>
+      <b>GA:</b> pop 60 · gens 60 · seed 70% · elite 8% · tournament 3 ·
+      cx 0.85 · mut 0.15
+    </div>
+    <div class="legend">
+      <span><i style="background:var(--pv)"></i>PV fc</span>
+      <span><i style="background:var(--load)"></i>Load fc</span>
+      <span><i style="background:var(--bat)"></i>Battery</span>
+      <span><i style="background:var(--diesel)"></i>Diesel</span>
+      <span><i style="background:var(--commit)"></i>Commit 6 h</span>
+    </div>
+  </footer>
+
+  <script>
+(() => {
+  // ════════════════════════════════════════════════════════════════════════
+  // Plant / EMS / GA constants (from microgrid config)
+  // ════════════════════════════════════════════════════════════════════════
+  const H = 24;           // horizon
+  const COMMIT = 6;
+  const POP = 60;         // slightly smaller than paper 120 for live viz clarity
+  const GENS = 60;
+  const SEED_FRAC = 0.70;
+  const ELITE_FRAC = 0.08;
+  const TOURNEY = 3;
+  const CX_RATE = 0.85;
+  const MUT_RATE = 0.15;
+  const MUT_SCALE = 0.20;
+  const SEED_JITTER = 0.10;
+  const P_BAT = 65;
+  const BAT_KWH = 130;
+  const SOC_MIN = 0.10, SOC_MAX = 1.0;
+  const ETA_C = 0.95, ETA_D = 0.95;
+  const DIESEL_KW = 40;
+  const DIESEL_COST = 5.28;
+  const UNMET_PEN = 950 * DIESEL_COST;
+  const CURT_PEN = 0.05;
+  const THRU_PEN = 0.02;
+
+  // ════════════════════════════════════════════════════════════════════════
+  // Synthetic but realistic forecast day (Tamale-like shapes)
+  // ════════════════════════════════════════════════════════════════════════
+  function makeDay(seed = 1) {
+    // simple LCG
+    let s = seed >>> 0;
+    const rnd = () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 0x100000000; };
+    const pv = new Float64Array(H);
+    const load = new Float64Array(H);
+    const pvTrue = new Float64Array(H);
+    const loadTrue = new Float64Array(H);
+    for (let h = 0; h < H; h++) {
+      // PV clear-sky-ish
+      const rise = 5.75, set = 18.25;
+      let p = 0;
+      if (h >= rise && h <= set) {
+        const x = (h - rise) / (set - rise);
+        p = 77.4 * 0.92 * Math.pow(Math.sin(Math.PI * x), 1.15);
+      }
+      // Forecast noise
+      const cloud = 1 - 0.12 * Math.sin(h * 0.7 + seed) - 0.05 * rnd();
+      pv[h] = Math.max(0, p * cloud);
+      // Truth differs (forecast error) — under/over predict
+      pvTrue[h] = Math.max(0, p * (cloud + (rnd() - 0.5) * 0.18));
+
+      // Load: morning bump + evening peak + daytime productive
+      const basic =
+        0.4 + 1.2 * Math.exp(-0.5 * Math.pow((h - 7) / 1.5, 2)) +
+        3.5 * Math.exp(-0.5 * Math.pow((h - 19.5) / 2.2, 2)) +
+        0.8 * Math.exp(-0.5 * Math.pow((h - 12) / 4, 2));
+      const prod = h >= 8 && h <= 17
+        ? 4.5 + 2.5 * Math.sin(((h - 8) / 9) * Math.PI)
+        : 0.6;
+      load[h] = (basic * 3.2 + prod * 1.8) * (0.95 + 0.1 * rnd());
+      // Truth: occasional productive spike
+      let lt = load[h] * (0.97 + 0.08 * rnd());
+      if (h >= 9 && h <= 16 && rnd() < 0.08) lt *= 1.8;
+      loadTrue[h] = lt;
+    }
+    return { pv, load, pvTrue, loadTrue, seed };
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // Dispatch simulate + objective (faithful to project physics)
+  // ════════════════════════════════════════════════════════════════════════
+  function simulate(pv, load, bPlan, dPlan, soc0) {
+    const n = pv.length;
+    const charge = new Float64Array(n);
+    const discharge = new Float64Array(n);
+    const diesel = new Float64Array(n);
+    const unmet = new Float64Array(n);
+    const curt = new Float64Array(n);
+    const soc = new Float64Array(n);
+    let s = soc0;
+    for (let h = 0; h < n; h++) {
+      let bat = Math.max(-P_BAT, Math.min(P_BAT, bPlan[h])); // + discharge
+      let diesReq = Math.max(0, Math.min(DIESEL_KW, dPlan[h]));
+      const net = pv[h] - load[h]; // + surplus
+
+      if (net >= 0) {
+        // Surplus: follow charge plan; ignore discharge-into-surplus
+        const room = (SOC_MAX - s) * BAT_KWH / ETA_C;
+        if (bat < 0) {
+          charge[h] = Math.min(-bat, net, P_BAT, Math.max(0, room));
+        } else {
+          charge[h] = 0;
+        }
+        curt[h] = Math.max(0, net - charge[h]);
+        discharge[h] = 0;
+        diesel[h] = 0;
+        unmet[h] = 0;
+        s += charge[h] * ETA_C / BAT_KWH;
+      } else {
+        // Deficit: load priority — discharge then diesel (clamped to residual)
+        let need = -net;
+        const avail = Math.max(0, (s - SOC_MIN) * BAT_KWH * ETA_D);
+        const disCap = Math.min(P_BAT, avail);
+        const dis = bat > 0 ? Math.min(need, disCap, bat) : Math.min(need, disCap);
+        discharge[h] = dis;
+        need -= dis;
+        diesel[h] = Math.min(need, DIESEL_KW); // physics repair: genuine residual only
+        need -= diesel[h];
+        unmet[h] = Math.max(0, need);
+        charge[h] = 0;
+        curt[h] = 0;
+        s -= discharge[h] / ETA_D / BAT_KWH;
+      }
+      s = Math.max(SOC_MIN, Math.min(SOC_MAX, s));
+      soc[h] = s;
+    }
+    return { charge, discharge, diesel, unmet, curt, soc, finalSoc: s };
+  }
+
+  function objective(res) {
+    let cost = 0;
+    for (let h = 0; h < res.diesel.length; h++) {
+      cost += res.diesel[h] * DIESEL_COST;
+      cost += res.unmet[h] * UNMET_PEN;
+      cost += res.curt[h] * CURT_PEN;
+      cost += (res.charge[h] + res.discharge[h]) * THRU_PEN;
+    }
+    return cost;
+  }
+
+  function greedyMerit(pv, load, soc0) {
+    const b = new Float64Array(H);
+    const d = new Float64Array(H);
+    let s = soc0;
+    for (let h = 0; h < H; h++) {
+      const net = pv[h] - load[h];
+      if (net >= 0) {
+        const room = (SOC_MAX - s) * BAT_KWH / ETA_C;
+        const ch = Math.min(net, P_BAT, Math.max(0, room));
+        b[h] = -ch;
+        s += ch * ETA_C / BAT_KWH;
+        d[h] = 0;
+      } else {
+        const need = -net;
+        const avail = Math.max(0, (s - SOC_MIN) * BAT_KWH * ETA_D);
+        const dis = Math.min(need, P_BAT, avail);
+        b[h] = dis;
+        s -= dis / ETA_D / BAT_KWH;
+        d[h] = Math.min(need - dis, DIESEL_KW);
+      }
+      s = Math.max(SOC_MIN, Math.min(SOC_MAX, s));
+    }
+    return { b, d };
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // GA state
+  // ════════════════════════════════════════════════════════════════════════
+  const rng = {
+    s: 20260709 >>> 0,
+    next() { this.s = (this.s * 1664525 + 1013904223) >>> 0; return this.s / 0x100000000; },
+    normal() {
+      // Box-Muller
+      const u = Math.max(1e-12, this.next());
+      const v = this.next();
+      return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
+    },
+    int(n) { return Math.floor(this.next() * n); },
+  };
+
+  function clipB(x) { return Math.max(-P_BAT, Math.min(P_BAT, x)); }
+  function clipD(x) { return Math.max(0, Math.min(DIESEL_KW, x)); }
+
+  const state = {
+    day: null,
+    soc0: 0.55,
+    block: 0,
+    gen: 0,
+    stage: "forecast", // forecast | seed | evolve | commit | replay
+    B: null, // POP x H battery genomes
+    D: null,
+    fitness: null,
+    origin: null, // 'seed' | 'jitter' | 'random' | 'elite' | 'child'
+    history: [],
+    seededFitness: 0,
+    bestIdx: 0,
+    bestB: null,
+    bestD: null,
+    committed: null, // first 6h of bestB
+    replay: null,
+    playing: true,
+    msPerGen: 80,
+    flash: {},
+    log: [],
+  };
+
+  function log(tag, html) {
+    state.log.unshift({ tag, html, t: performance.now() });
+    if (state.log.length > 80) state.log.pop();
+    renderLog();
+  }
+
+  function renderLog() {
+    const el = document.getElementById("decision-log");
+    el.innerHTML = state.log.map((e) =>
+      `<div class="line"><span class="tag ${e.tag}">${e.tag}</span>${e.html}</div>`
+    ).join("");
+  }
+
+  function setStage(name) {
+    state.stage = name;
+    document.querySelectorAll(".stage").forEach((el) => {
+      el.classList.toggle("on", el.dataset.stage === name);
+    });
+  }
+
+  function flashOp(name, ms = 220) {
+    const el = document.getElementById("op-" + name);
+    if (!el) return;
+    el.classList.add("flash", name);
+    clearTimeout(state.flash[name]);
+    state.flash[name] = setTimeout(() => el.classList.remove("flash", name), ms);
+  }
+
+  function evaluateAll() {
+    const { pv, load } = state.day;
+    for (let i = 0; i < POP; i++) {
+      const res = simulate(pv, load, state.B[i], state.D[i], state.soc0);
+      state.fitness[i] = objective(res);
+    }
+    let bi = 0;
+    for (let i = 1; i < POP; i++) if (state.fitness[i] < state.fitness[bi]) bi = i;
+    state.bestIdx = bi;
+    state.bestB = state.B[bi].slice();
+    state.bestD = state.D[bi].slice();
+  }
+
+  function initBlock() {
+    state.block++;
+    state.day = makeDay(1000 + state.block * 17 + (rng.s % 1000));
+    state.gen = 0;
+    state.history = [];
+    state.B = Array.from({ length: POP }, () => new Float64Array(H));
+    state.D = Array.from({ length: POP }, () => new Float64Array(H));
+    state.fitness = new Float64Array(POP);
+    state.origin = Array(POP).fill("random");
+    state.committed = null;
+    state.replay = null;
+
+    setStage("forecast");
+    log("eval", `<b>Block ${state.block}</b> — issue 24 h forecast (PV + load). SoC₀=${(state.soc0 * 100).toFixed(0)}%`);
+
+    // Seed
+    setStage("seed");
+    flashOp("seed", 400);
+    const seed = greedyMerit(state.day.pv, state.day.load, state.soc0);
+    const nSeed = Math.round(SEED_FRAC * POP);
+    state.B[0].set(seed.b);
+    state.D[0].set(seed.d);
+    state.origin[0] = "seed";
+    for (let i = 1; i < nSeed; i++) {
+      for (let h = 0; h < H; h++) {
+        state.B[i][h] = clipB(seed.b[h] + rng.normal() * SEED_JITTER * P_BAT);
+        state.D[i][h] = clipD(seed.d[h] + rng.normal() * SEED_JITTER * DIESEL_KW);
+      }
+      state.origin[i] = "jitter";
+    }
+    for (let i = nSeed; i < POP; i++) {
+      for (let h = 0; h < H; h++) {
+        state.B[i][h] = clipB((rng.next() * 2 - 1) * P_BAT);
+        state.D[i][h] = clipD(rng.next() * DIESEL_KW);
+      }
+      state.origin[i] = "random";
+    }
+    flashOp("eval", 300);
+    evaluateAll();
+    state.seededFitness = state.fitness[0];
+    log("seed", `Merit-order seed + ${nSeed - 1} jittered · ${POP - nSeed} random · seed fitness <b>${state.seededFitness.toFixed(1)}</b> GHS`);
+    setStage("evolve");
+    document.getElementById("block-label").textContent = `block ${state.block}`;
+  }
+
+  function tournament() {
+    let best = rng.int(POP);
+    for (let k = 1; k < TOURNEY; k++) {
+      const j = rng.int(POP);
+      if (state.fitness[j] < state.fitness[best]) best = j;
+    }
+    return best;
+  }
+
+  function stepGeneration() {
+    if (state.stage === "commit" || state.stage === "replay") return false;
+    if (state.gen >= GENS) {
+      doCommit();
+      return false;
+    }
+
+    setStage("evolve");
+    const nElite = Math.max(1, Math.round(ELITE_FRAC * POP));
+    // Sort indices by fitness
+    const order = Array.from({ length: POP }, (_, i) => i)
+      .sort((a, b) => state.fitness[a] - state.fitness[b]);
+
+    const newB = Array.from({ length: POP }, () => new Float64Array(H));
+    const newD = Array.from({ length: POP }, () => new Float64Array(H));
+    const newO = Array(POP);
+
+    // Elites
+    flashOp("elite");
+    for (let i = 0; i < nElite; i++) {
+      newB[i].set(state.B[order[i]]);
+      newD[i].set(state.D[order[i]]);
+      newO[i] = "elite";
+    }
+
+    // Children
+    let didCross = false, didMut = false;
+    for (let i = nElite; i < POP; i++) {
+      const pa = tournament();
+      const pb = tournament();
+      const doCx = rng.next() < CX_RATE;
+      if (doCx) didCross = true;
+      for (let h = 0; h < H; h++) {
+        let b = doCx
+          ? (rng.next() < 0.5 ? state.B[pa][h] : state.B[pb][h])
+          : state.B[pa][h];
+        let d = doCx
+          ? (rng.next() < 0.5 ? state.D[pa][h] : state.D[pb][h])
+          : state.D[pa][h];
+        if (rng.next() < MUT_RATE) {
+          b += rng.normal() * MUT_SCALE * P_BAT;
+          didMut = true;
+        }
+        if (rng.next() < MUT_RATE) {
+          d += rng.normal() * MUT_SCALE * DIESEL_KW;
+          didMut = true;
+        }
+        newB[i][h] = clipB(b);
+        newD[i][h] = clipD(d);
+      }
+      newO[i] = "child";
+    }
+    if (didCross) flashOp("cross");
+    if (didMut) flashOp("mut");
+
+    state.B = newB;
+    state.D = newD;
+    state.origin = newO;
+    flashOp("eval");
+    evaluateAll();
+    state.gen++;
+    state.history.push(state.fitness[state.bestIdx]);
+
+    if (state.gen % 5 === 0 || state.gen === 1 || state.gen === GENS) {
+      const best = state.fitness[state.bestIdx];
+      const improve = state.seededFitness - best;
+      log("elite",
+        `Gen <b>${state.gen}</b> · best fitness <b>${best.toFixed(1)}</b> GHS` +
+        ` · Δ vs seed <b>${improve >= 0 ? "−" : "+"}${Math.abs(improve).toFixed(1)}</b>` +
+        ` · elite keep ${nElite}`
+      );
+    }
+
+    if (state.gen >= GENS) {
+      doCommit();
+    }
+    return true;
+  }
+
+  function doCommit() {
+    setStage("commit");
+    flashOp("commit", 500);
+    state.committed = {
+      b: state.bestB.slice(0, COMMIT),
+      d: state.bestD.slice(0, COMMIT),
+    };
+    log("commit",
+      `Commit hours <b>0–${COMMIT - 1}</b> of best genome. ` +
+      `Battery trajectory frozen; diesel remains balancing unit on residual deficit.`
+    );
+
+    // Replay against truth
+    setStage("replay");
+    const { pvTrue, loadTrue } = state.day;
+    const bPlan = state.committed.b;
+    // diesel follows deficit: request full rating; simulate clamps
+    const dPlan = new Float64Array(COMMIT).fill(DIESEL_KW);
+    const res = simulate(
+      pvTrue.subarray(0, COMMIT),
+      loadTrue.subarray(0, COMMIT),
+      bPlan,
+      dPlan,
+      state.soc0
+    );
+    state.replay = res;
+    state.soc0 = res.finalSoc; // carry SoC into next block
+
+    let dieselSum = 0, unmetSum = 0;
+    for (let h = 0; h < COMMIT; h++) {
+      dieselSum += res.diesel[h];
+      unmetSum += res.unmet[h];
+    }
+    log("replay",
+      `Replay on <b>ground truth</b> · diesel ${dieselSum.toFixed(1)} kWh · unmet ${unmetSum.toFixed(2)} kWh · ` +
+      `SoC → <b>${(res.finalSoc * 100).toFixed(0)}%</b>. Forecast error now visible as cost.`
+    );
+
+    // After a short pause, auto-start next block if playing
+    state._replayUntil = performance.now() + 2200;
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // Drawing
+  // ════════════════════════════════════════════════════════════════════════
+  function sizeCanvas(c) {
+    const dpr = Math.min(devicePixelRatio || 1, 2);
+    const w = c.clientWidth, h = c.clientHeight;
+    if (w < 2 || h < 2) return null;
+    if (c.width !== Math.floor(w * dpr) || c.height !== Math.floor(h * dpr)) {
+      c.width = Math.floor(w * dpr);
+      c.height = Math.floor(h * dpr);
+    }
+    const ctx = c.getContext("2d");
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { ctx, w, h };
+  }
+
+  function drawPopulation() {
+    const c = document.getElementById("pop-canvas");
+    const S = sizeCanvas(c);
+    if (!S || !state.B) return;
+    const { ctx, w, h } = S;
+    ctx.clearRect(0, 0, w, h);
+
+    // Sort display by fitness so best at top
+    const order = Array.from({ length: POP }, (_, i) => i)
+      .sort((a, b) => state.fitness[a] - state.fitness[b]);
+
+    const padL = 36, padR = 8, padT = 8, padB = 22;
+    const cw = w - padL - padR, ch = h - padT - padB;
+    const cellW = cw / H;
+    const cellH = ch / POP;
+
+    // Background
+    ctx.fillStyle = "#0a101c";
+    ctx.fillRect(0, 0, w, h);
+
+    for (let row = 0; row < POP; row++) {
+      const i = order[row];
+      const y = padT + row * cellH;
+      // origin stripe
+      const o = state.origin[i];
+      ctx.fillStyle =
+        o === "seed" ? "rgba(245,197,66,0.55)" :
+        o === "jitter" ? "rgba(245,197,66,0.25)" :
+        o === "elite" ? "rgba(74,222,128,0.45)" :
+        o === "child" ? "rgba(100,116,139,0.25)" :
+        "rgba(100,116,139,0.15)";
+      ctx.fillRect(2, y + 1, padL - 6, Math.max(1, cellH - 2));
+
+      for (let hour = 0; hour < H; hour++) {
+        const v = state.B[i][hour]; // -65 charge .. +65 discharge
+        const t = (v + P_BAT) / (2 * P_BAT); // 0..1
+        // blue-green charge → yellow → red discharge
+        const r = Math.floor(30 + t * 200);
+        const g = Math.floor(180 - Math.abs(t - 0.5) * 120);
+        const b = Math.floor(220 - t * 180);
+        ctx.fillStyle = `rgb(${r},${g},${b})`;
+        // commit window highlight border on best
+        ctx.fillRect(padL + hour * cellW, y, Math.ceil(cellW) + 0.5, Math.ceil(cellH) + 0.5);
+      }
+
+      // Best row outline
+      if (i === state.bestIdx) {
+        ctx.strokeStyle = "#4ade80";
+        ctx.lineWidth = 1.5;
+        ctx.strokeRect(padL + 0.5, y + 0.5, cw - 1, Math.max(1, cellH - 1));
+      }
+    }
+
+    // Commit window overlay
+    ctx.fillStyle = "rgba(251,146,60,0.12)";
+    ctx.fillRect(padL, padT, cellW * COMMIT, ch);
+    ctx.strokeStyle = "rgba(251,146,60,0.5)";
+    ctx.lineWidth = 1;
+    ctx.setLineDash([4, 3]);
+    ctx.strokeRect(padL + 0.5, padT + 0.5, cellW * COMMIT - 1, ch - 1);
+    ctx.setLineDash([]);
+
+    // Hour ticks
+    ctx.fillStyle = "#6b7a94";
+    ctx.font = "10px Segoe UI, sans-serif";
+    ctx.textAlign = "center";
+    for (let hour = 0; hour < H; hour += 3) {
+      ctx.fillText(String(hour), padL + (hour + 0.5) * cellW, h - 6);
+    }
+    ctx.textAlign = "left";
+    ctx.fillText("best↑", 4, padT + 10);
+    ctx.fillStyle = "#fb923c";
+    ctx.fillText("commit 6h", padL + 4, padT + 12);
+
+    document.getElementById("gen-label").textContent = `gen ${state.gen} / ${GENS}`;
+  }
+
+  function drawFitness() {
+    const c = document.getElementById("fit-canvas");
+    const S = sizeCanvas(c);
+    if (!S) return;
+    const { ctx, w, h } = S;
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = "#0a101c";
+    ctx.fillRect(0, 0, w, h);
+
+    const hist = state.history;
+    const pad = { l: 44, r: 12, t: 12, b: 28 };
+    const cw = w - pad.l - pad.r, ch = h - pad.t - pad.b;
+
+    if (hist.length < 1) {
+      ctx.fillStyle = "#6b7a94";
+      ctx.font = "12px Segoe UI";
+      ctx.fillText("Waiting for generations…", pad.l, h / 2);
+      return;
+    }
+
+    const seed = state.seededFitness;
+    const minF = Math.min(...hist, seed) * 0.95;
+    const maxF = Math.max(...hist, seed) * 1.05;
+    const xOf = (i) => pad.l + (i / Math.max(GENS - 1, 1)) * cw;
+    const yOf = (f) => pad.t + (1 - (f - minF) / (maxF - minF || 1)) * ch;
+
+    // Grid
+    ctx.strokeStyle = "rgba(255,255,255,0.05)";
+    ctx.beginPath();
+    for (let i = 0; i < 4; i++) {
+      const y = pad.t + (i / 3) * ch;
+      ctx.moveTo(pad.l, y); ctx.lineTo(pad.l + cw, y);
+    }
+    ctx.stroke();
+
+    // Seed reference
+    ctx.strokeStyle = "rgba(245,197,66,0.7)";
+    ctx.setLineDash([5, 4]);
+    ctx.beginPath();
+    ctx.moveTo(pad.l, yOf(seed));
+    ctx.lineTo(pad.l + cw, yOf(seed));
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.fillStyle = "#f5c542";
+    ctx.font = "10px Segoe UI";
+    ctx.fillText("merit-order seed", pad.l + 4, yOf(seed) - 4);
+
+    // Best fitness curve
+    ctx.strokeStyle = "#4ade80";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    hist.forEach((f, i) => {
+      const x = xOf(i), y = yOf(f);
+      if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    });
+    ctx.stroke();
+
+    // Point
+    const last = hist[hist.length - 1];
+    ctx.fillStyle = "#4ade80";
+    ctx.beginPath();
+    ctx.arc(xOf(hist.length - 1), yOf(last), 4, 0, Math.PI * 2);
+    ctx.fill();
+
+    // Axes labels
+    ctx.fillStyle = "#6b7a94";
+    ctx.font = "10px Segoe UI";
+    ctx.fillText(maxF.toFixed(0), 4, pad.t + 8);
+    ctx.fillText(minF.toFixed(0), 4, pad.t + ch);
+    ctx.fillText("generation →", pad.l + cw / 2 - 30, h - 8);
+
+    const improve = seed - last;
+    document.getElementById("fit-label").textContent =
+      `best ${last.toFixed(1)} · seed ${seed.toFixed(1)} · Δ ${improve >= 0 ? "−" : "+"}${Math.abs(improve).toFixed(1)}`;
+  }
+
+  function drawPlan() {
+    const c = document.getElementById("plan-canvas");
+    const S = sizeCanvas(c);
+    if (!S || !state.bestB) return;
+    const { ctx, w, h } = S;
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = "#0a101c";
+    ctx.fillRect(0, 0, w, h);
+
+    const pad = { l: 36, r: 10, t: 14, b: 24 };
+    const cw = w - pad.l - pad.r, ch = h - pad.t - pad.b;
+    const { pv, load } = state.day;
+    const maxY = 90;
+    const xOf = (i) => pad.l + (i / (H - 1)) * cw;
+    const yOf = (v) => pad.t + (1 - v / maxY) * ch;
+
+    // Commit shade
+    ctx.fillStyle = "rgba(251,146,60,0.1)";
+    ctx.fillRect(pad.l, pad.t, (COMMIT - 1) / (H - 1) * cw, ch);
+
+    function line(arr, color, width = 1.6) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      for (let i = 0; i < H; i++) {
+        const x = xOf(i), y = yOf(arr[i]);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+    line(pv, "#f5c542", 1.8);
+    line(load, "#a78bfa", 1.8);
+
+    // Battery as bars (charge down green, discharge up lime)
+    const barW = cw / H * 0.55;
+    for (let i = 0; i < H; i++) {
+      const v = state.bestB[i];
+      const x = xOf(i) - barW / 2;
+      const zero = yOf(0);
+      if (v >= 0) {
+        ctx.fillStyle = "rgba(74,222,128,0.75)";
+        const y = yOf(v);
+        ctx.fillRect(x, y, barW, zero - y);
+      } else {
+        ctx.fillStyle = "rgba(34,197,94,0.55)";
+        const y = yOf(0);
+        ctx.fillRect(x, y, barW, yOf(Math.abs(v)) - zero);
+      }
+    }
+
+    // Diesel plan (thin red)
+    line(state.bestD, "#f87171", 1.3);
+
+    // Zero line
+    ctx.strokeStyle = "rgba(255,255,255,0.08)";
+    ctx.beginPath();
+    ctx.moveTo(pad.l, yOf(0));
+    ctx.lineTo(pad.l + cw, yOf(0));
+    ctx.stroke();
+
+    ctx.fillStyle = "#6b7a94";
+    ctx.font = "10px Segoe UI";
+    ctx.fillText("0", 8, yOf(0) + 3);
+    ctx.fillText("forecast + best battery/diesel plan", pad.l, 12);
+
+    document.getElementById("plan-label").textContent =
+      `fitness ${state.fitness[state.bestIdx].toFixed(1)} GHS`;
+  }
+
+  function drawCommit() {
+    const c = document.getElementById("commit-canvas");
+    const S = sizeCanvas(c);
+    if (!S) return;
+    const { ctx, w, h } = S;
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = "#0a101c";
+    ctx.fillRect(0, 0, w, h);
+
+    const pad = { l: 36, r: 10, t: 16, b: 24 };
+    const cw = w - pad.l - pad.r, ch = h - pad.t - pad.b;
+
+    if (!state.committed || !state.replay) {
+      ctx.fillStyle = "#6b7a94";
+      ctx.font = "12px Segoe UI";
+      ctx.fillText("After 60 generations: commit 6 h, then replay on truth…", pad.l, h / 2);
+      document.getElementById("commit-label").textContent = "pending";
+      return;
+    }
+
+    const { pvTrue, loadTrue, pv, load } = state.day;
+    const maxY = 90;
+    const xOf = (i) => pad.l + (i / Math.max(COMMIT - 1, 1)) * cw;
+    const yOf = (v) => pad.t + (1 - v / maxY) * ch;
+
+    function line(arr, color, width = 1.6, n = COMMIT) {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      for (let i = 0; i < n; i++) {
+        const x = xOf(i), y = yOf(arr[i]);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+
+    // Forecast (dashed) vs truth (solid)
+    ctx.setLineDash([4, 3]);
+    line(pv, "rgba(245,197,66,0.45)", 1.2);
+    line(load, "rgba(167,139,250,0.45)", 1.2);
+    ctx.setLineDash([]);
+    line(pvTrue, "#f5c542", 1.8);
+    line(loadTrue, "#a78bfa", 1.8);
+
+    // Committed battery
+    const barW = cw / COMMIT * 0.5;
+    for (let i = 0; i < COMMIT; i++) {
+      const v = state.committed.b[i];
+      const x = xOf(i) - barW / 2;
+      const zero = yOf(0);
+      ctx.fillStyle = v >= 0 ? "rgba(74,222,128,0.8)" : "rgba(34,197,94,0.55)";
+      if (v >= 0) ctx.fillRect(x, yOf(v), barW, zero - yOf(v));
+      else ctx.fillRect(x, zero, barW, yOf(-v) - zero);
+    }
+
+    // Replay diesel
+    line(state.replay.diesel, "#f87171", 2);
+
+    ctx.fillStyle = "#6b7a94";
+    ctx.font = "10px Segoe UI";
+    ctx.fillText("dashed = forecast · solid = truth · red = diesel on replay", pad.l, 12);
+
+    let dSum = 0;
+    for (let i = 0; i < COMMIT; i++) dSum += state.replay.diesel[i];
+    document.getElementById("commit-label").textContent =
+      `diesel ${dSum.toFixed(1)} kWh · SoC ${(state.replay.finalSoc * 100).toFixed(0)}%`;
+  }
+
+  function drawAll() {
+    drawPopulation();
+    drawFitness();
+    drawPlan();
+    drawCommit();
+  }
+
+  // ════════════════════════════════════════════════════════════════════════
+  // Main loop
+  // ════════════════════════════════════════════════════════════════════════
+  let acc = 0;
+  let last = performance.now();
+
+  function frame(now) {
+    const dt = Math.min((now - last) / 1000, 0.1);
+    last = now;
+
+    if (state.playing) {
+      if (state.stage === "replay" && state._replayUntil) {
+        if (now >= state._replayUntil) {
+          state._replayUntil = 0;
+          initBlock();
+        }
+      } else if (state.stage === "evolve" || state.stage === "seed") {
+        acc += dt * 1000;
+        while (acc >= state.msPerGen) {
+          acc -= state.msPerGen;
+          stepGeneration();
+          if (state.stage !== "evolve") break;
+        }
+      }
+    }
+
+    drawAll();
+    requestAnimationFrame(frame);
+  }
+
+  // Controls
+  const btnPlay = document.getElementById("btn-play");
+  btnPlay.addEventListener("click", () => {
+    state.playing = !state.playing;
+    btnPlay.textContent = state.playing ? "Pause" : "Play";
+    btnPlay.classList.toggle("active", state.playing);
+  });
+  document.getElementById("btn-step").addEventListener("click", () => {
+    if (state.stage === "replay") { initBlock(); return; }
+    stepGeneration();
+    drawAll();
+  });
+  document.getElementById("btn-block").addEventListener("click", () => {
+    initBlock();
+    drawAll();
+  });
+  const speed = document.getElementById("speed");
+  function applySpeed() {
+    const v = Number(speed.value);
+    // 1..40 → 250ms .. 20ms per generation
+    state.msPerGen = 250 - (v / 40) * 230;
+    document.getElementById("speed-label").textContent =
+      `${(1000 / state.msPerGen).toFixed(1)} gen/s`;
+  }
+  speed.addEventListener("input", applySpeed);
+  applySpeed();
+
+  window.addEventListener("resize", () => drawAll());
+
+  // Boot
+  initBlock();
+  requestAnimationFrame(frame);
+})();
+  </script>
+</body>
+</html>

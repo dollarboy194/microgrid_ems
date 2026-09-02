@@ -1,0 +1,1828 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Tamale Microgrid — 3D + 24 h Day Cycle</title>
+  <style>
+    :root {
+      --bg: #0b1220; --panel: rgba(12, 20, 36, 0.9); --border: rgba(120, 170, 255, 0.22);
+      --text: #e8eef9; --muted: #9aa8c0; --accent: #5ec8ff;
+      --pv: #f5c542; --bat: #4ade80; --diesel: #f87171; --load: #a78bfa; --ems: #38bdf8;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body {
+      width: 100%; height: 100%; overflow: hidden;
+      background: var(--bg); color: var(--text);
+      font-family: "Segoe UI", system-ui, -apple-system, sans-serif;
+    }
+    #canvas-wrap { position: absolute; inset: 0; }
+    canvas.webgl { display: block; width: 100%; height: 100%; }
+
+    #boot {
+      position: absolute; inset: 0; z-index: 50; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 12px; background: var(--bg);
+      transition: opacity 0.45s;
+    }
+    #boot.hide { opacity: 0; pointer-events: none; }
+    #boot .spin {
+      width: 36px; height: 36px; border: 3px solid #234; border-top-color: var(--accent);
+      border-radius: 50%; animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #boot p { color: var(--muted); font-size: 13px; max-width: 360px; text-align: center; line-height: 1.4; }
+
+    #err {
+      display: none; position: absolute; top: 10px; left: 50%; transform: translateX(-50%);
+      z-index: 100; max-width: min(520px, 94vw); background: #3b1212; border: 1px solid #f87171;
+      color: #fecaca; padding: 12px 16px; border-radius: 10px; font-size: 12.5px; line-height: 1.45;
+      white-space: pre-wrap;
+    }
+    #err.show { display: block; }
+
+    .panel {
+      position: absolute; z-index: 10; background: var(--panel);
+      border: 1px solid var(--border); backdrop-filter: blur(14px);
+      border-radius: 14px; box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+    }
+
+    #header {
+      top: 14px; left: 14px; padding: 12px 16px;
+      max-width: min(340px, calc(100vw - 28px));
+    }
+    #header h1 { font-size: 14px; font-weight: 650; margin-bottom: 4px; }
+    #header p { font-size: 11.5px; color: var(--muted); line-height: 1.4; }
+    #header .badge {
+      display: inline-block; margin-top: 7px; font-size: 10.5px; padding: 2px 8px;
+      border-radius: 999px; background: rgba(94, 200, 255, 0.12); color: var(--accent);
+      border: 1px solid rgba(94, 200, 255, 0.25);
+    }
+
+    #day-panel {
+      top: 14px; left: 50%; transform: translateX(-50%);
+      padding: 10px 16px 12px; width: min(440px, calc(100vw - 28px)); text-align: center;
+    }
+    #clock {
+      font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; letter-spacing: 0.04em;
+    }
+    #phase { font-size: 11.5px; color: var(--muted); margin: 3px 0 8px; min-height: 1.3em; }
+    #timeline {
+      position: relative; height: 7px; border-radius: 999px;
+      background: linear-gradient(90deg,
+        #1a2744 0%, #2a3a5c 20%, #f5c54244 35%, #f5c54288 50%,
+        #f5c54244 65%, #2a3a5c 80%, #1a2744 100%);
+      border: 1px solid rgba(255,255,255,0.08);
+    }
+    #needle {
+      position: absolute; top: -4px; width: 3px; height: 15px; background: #fff;
+      border-radius: 2px; box-shadow: 0 0 8px rgba(255,255,255,0.6);
+      transform: translateX(-50%); left: 25%;
+    }
+    #tlabels {
+      display: flex; justify-content: space-between; font-size: 9.5px;
+      color: #6b7a94; margin-top: 4px; font-variant-numeric: tabular-nums;
+    }
+
+    #legend {
+      bottom: 14px; left: 14px; padding: 12px 14px; min-width: 230px;
+    }
+    #legend h2 {
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--muted); margin-bottom: 8px;
+    }
+    .leg-item {
+      display: flex; align-items: center; gap: 9px; font-size: 12px;
+      padding: 4px 0; cursor: pointer; border-radius: 6px;
+    }
+    .leg-item:hover { background: rgba(255,255,255,0.04); }
+    .leg-item.active { background: rgba(94, 200, 255, 0.1); }
+    .swatch {
+      width: 11px; height: 11px; border-radius: 3px; flex-shrink: 0;
+      box-shadow: 0 0 7px currentColor;
+    }
+    .leg-meta {
+      margin-left: auto; color: var(--muted); font-size: 10.5px;
+      font-variant-numeric: tabular-nums;
+    }
+
+    #meters {
+      top: 100px; right: 14px; padding: 12px 14px; width: min(260px, calc(100vw - 28px));
+    }
+    #meters h2 {
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.08em;
+      color: var(--muted); margin-bottom: 8px;
+    }
+    .meter {
+      display: grid; grid-template-columns: 62px 1fr 48px; gap: 7px; align-items: center;
+      margin-bottom: 6px; font-size: 11px;
+    }
+    .meter .name { color: var(--muted); }
+    .meter .val { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+    .track { height: 6px; border-radius: 99px; background: rgba(255,255,255,0.07); overflow: hidden; }
+    .fill { height: 100%; width: 0%; border-radius: 99px; }
+    .fill.pv { background: var(--pv); box-shadow: 0 0 6px var(--pv); }
+    .fill.load { background: var(--load); box-shadow: 0 0 6px var(--load); }
+    .fill.bat { background: var(--bat); box-shadow: 0 0 6px var(--bat); }
+    .fill.diesel { background: var(--diesel); box-shadow: 0 0 6px var(--diesel); }
+    .fill.soc { background: linear-gradient(90deg, #ef4444, #f5c542, #4ade80); }
+    #status {
+      margin-top: 8px; padding-top: 8px; border-top: 1px solid rgba(255,255,255,0.06);
+      font-size: 10.5px; color: var(--muted); line-height: 1.4; min-height: 2.5em;
+    }
+    #status b { color: var(--text); }
+
+    #detail {
+      top: 100px; left: 14px; width: min(280px, calc(100vw - 28px));
+      padding: 14px 16px; display: none;
+    }
+    #detail.visible { display: block; }
+    #detail .tag {
+      font-size: 10px; text-transform: uppercase; letter-spacing: 0.1em;
+      color: var(--muted); margin-bottom: 4px;
+    }
+    #detail h3 { font-size: 15px; margin-bottom: 6px; }
+    #detail p { font-size: 11.5px; color: var(--muted); line-height: 1.45; margin-bottom: 10px; }
+    #detail dl {
+      display: grid; grid-template-columns: 1fr auto; gap: 5px 10px; font-size: 11px;
+    }
+    #detail dt { color: var(--muted); }
+    #detail dd { text-align: right; font-variant-numeric: tabular-nums; font-weight: 560; }
+    #detail .close {
+      position: absolute; top: 8px; right: 10px; background: none; border: none;
+      color: var(--muted); font-size: 18px; cursor: pointer; line-height: 1;
+    }
+
+    #controls {
+      bottom: 14px; right: 14px; padding: 11px 13px;
+      min-width: 190px; display: flex; flex-direction: column; gap: 7px;
+    }
+    #controls label {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 10px; font-size: 11.5px; color: var(--muted);
+    }
+    #controls input[type="checkbox"] { accent-color: var(--accent); width: 14px; height: 14px; }
+    #controls input[type="range"] { width: 100px; accent-color: var(--accent); }
+    .btn-row { display: flex; gap: 6px; }
+    .btn {
+      flex: 1; font-size: 11.5px; padding: 6px 8px; border-radius: 8px;
+      border: 1px solid var(--border); background: rgba(255,255,255,0.04);
+      color: var(--text); cursor: pointer;
+    }
+    .btn:hover { background: rgba(94, 200, 255, 0.12); }
+    .btn.active { background: rgba(94, 200, 255, 0.18); border-color: var(--accent); color: var(--accent); }
+    #controls .hint { font-size: 10px; color: #6b7a94; line-height: 1.35; }
+    #speed-label { font-size: 10px; color: #6b7a94; text-align: right; margin-top: -4px; }
+
+    @media (max-width: 900px) {
+      #header { display: none; }
+      #detail { max-height: 40vh; overflow: auto; }
+    }
+  </style>
+</head>
+<body>
+  <div id="boot">
+    <div class="spin"></div>
+    <p id="boot-msg">Loading full 3D microgrid…<br/>Use <b>open_viewer.bat</b> if this stays stuck.</p>
+  </div>
+  <div id="err"></div>
+  <div id="canvas-wrap"></div>
+
+  <div id="header" class="panel">
+    <h1>Forecast-Driven EMS · Rural Microgrid</h1>
+    <p>
+      Islanded solar–battery–diesel near Tamale, Ghana.
+      Full plant view with live energy flows and a continuous 24 h day/night loop.
+    </p>
+    <span class="badge">Drag to orbit · click components · day loops forever</span>
+  </div>
+
+  <div id="day-panel" class="panel">
+    <div id="clock">06:00</div>
+    <div id="phase">Starting day cycle…</div>
+    <div id="timeline"><div id="needle"></div></div>
+    <div id="tlabels"><span>00</span><span>06</span><span>12</span><span>18</span><span>24</span></div>
+  </div>
+
+  <div id="legend" class="panel">
+    <h2>Plant &amp; control</h2>
+    <div class="leg-item" data-id="pv"><span class="swatch" style="background:var(--pv);color:var(--pv)"></span>PV array<span class="leg-meta" id="leg-pv">90 kWp</span></div>
+    <div class="leg-item" data-id="battery"><span class="swatch" style="background:var(--bat);color:var(--bat)"></span>Battery BESS<span class="leg-meta" id="leg-bat">130 kWh</span></div>
+    <div class="leg-item" data-id="pvCharge" style="opacity:0.95">
+      <span class="swatch" style="background:#a3e635;color:#a3e635"></span>
+      PV → BESS charge
+      <span class="leg-meta" id="leg-charge">—</span>
+    </div>
+    <div class="leg-item" data-id="diesel"><span class="swatch" style="background:var(--diesel);color:var(--diesel)"></span>Diesel genset<span class="leg-meta" id="leg-diesel">40 kW</span></div>
+    <div class="leg-item" data-id="load"><span class="swatch" style="background:var(--load);color:var(--load)"></span>Community load<span class="leg-meta" id="leg-load">175 HH</span></div>
+    <div class="leg-item" data-id="ems"><span class="swatch" style="background:var(--ems);color:var(--ems)"></span>EMS brain<span class="leg-meta">GA + ML</span></div>
+    <div class="leg-item" data-id="bus"><span class="swatch" style="background:#94a3b8;color:#94a3b8"></span>AC bus / PCC<span class="leg-meta">islanded</span></div>
+  </div>
+
+  <div id="meters" class="panel">
+    <h2>Live power (24 h loop)</h2>
+    <div class="meter"><span class="name">PV</span><div class="track"><div class="fill pv" id="b-pv"></div></div><span class="val" id="v-pv">0</span></div>
+    <div class="meter"><span class="name">Load</span><div class="track"><div class="fill load" id="b-load"></div></div><span class="val" id="v-load">0</span></div>
+    <div class="meter"><span class="name" id="bat-name">Battery</span><div class="track"><div class="fill bat" id="b-bat"></div></div><span class="val" id="v-bat">0</span></div>
+    <div class="meter"><span class="name">Diesel</span><div class="track"><div class="fill diesel" id="b-diesel"></div></div><span class="val" id="v-diesel">0</span></div>
+    <div class="meter"><span class="name">SoC</span><div class="track"><div class="fill soc" id="b-soc"></div></div><span class="val" id="v-soc">50%</span></div>
+    <div id="status">—</div>
+  </div>
+
+  <div id="detail" class="panel">
+    <button class="close" id="detail-close" type="button" aria-label="Close">×</button>
+    <div class="tag" id="detail-tag">Component</div>
+    <h3 id="detail-title">—</h3>
+    <p id="detail-desc"></p>
+    <dl id="detail-stats"></dl>
+  </div>
+
+  <div id="controls" class="panel">
+    <div class="btn-row">
+      <button class="btn active" id="btn-play" type="button">Pause</button>
+      <button class="btn" id="btn-reset" type="button">Reset 00:00</button>
+    </div>
+    <label>Speed <input type="range" id="speed" min="1" max="40" value="10" /></label>
+    <div id="speed-label">—</div>
+    <label>Energy flows <input type="checkbox" id="tog-flow" checked /></label>
+    <label>Mouse attract <input type="checkbox" id="tog-attract" checked /></label>
+    <label>EMS data links <input type="checkbox" id="tog-ems" checked /></label>
+    <label>Auto-rotate <input type="checkbox" id="tog-spin" checked /></label>
+    <div class="hint">
+      Hover particles to highlight · click scene for energy burst · drag to orbit.
+      Merit order: PV → battery → diesel.
+    </div>
+  </div>
+
+  <script type="module">
+    const $ = (id) => document.getElementById(id);
+    function showError(msg) {
+      const el = $("err");
+      el.textContent = msg;
+      el.classList.add("show");
+      console.error(msg);
+    }
+    window.addEventListener("error", (e) => showError(String(e.message || e.error || e)));
+    window.addEventListener("unhandledrejection", (e) => showError(String(e.reason)));
+
+    if (location.protocol === "file:") {
+      $("boot-msg").innerHTML =
+        "This page was opened as a <b>file://</b> link.<br/><br/>" +
+        "Double-click <b>open_viewer.bat</b> in the same folder instead.";
+      showError(
+        "Opened as file:// — 3D modules cannot load.\n\n" +
+        "Fix: double-click open_viewer.bat\n" +
+        "Path: C:\\Users\\boaky\\microgrid-ems\\visuals\\open_viewer.bat"
+      );
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // 24 h PHYSICS (load.py shapes + merit-order dispatch)
+    // ═══════════════════════════════════════════════════════════════════════
+    const BASIC_SHAPE = [
+      0.020, 0.018, 0.017, 0.017, 0.020, 0.030,
+      0.055, 0.060, 0.045, 0.028, 0.025, 0.025,
+      0.026, 0.025, 0.025, 0.026, 0.032, 0.050,
+      0.085, 0.110, 0.105, 0.080, 0.045, 0.030,
+    ];
+    const PRODUCTIVE_SHAPE = [
+      0.008, 0.008, 0.008, 0.008, 0.008, 0.012,
+      0.030, 0.055, 0.080, 0.110, 0.120, 0.115,
+      0.085, 0.085, 0.110, 0.100, 0.075, 0.040,
+      0.018, 0.010, 0.008, 0.008, 0.008, 0.008,
+    ];
+    const N_BASIC = 149, N_PROD = 26, KWH_B = 500, KWH_P = 1700, HPY = 8766, GAMMA = 1.3;
+    const PV_KWP = 90, PV_DERATE = 0.86;
+    const BAT_KWH = 130, SOC_MIN = 0.1, SOC_MAX = 1, P_BAT = 65;
+    const ETA_C = 0.95, ETA_D = 0.95, DIESEL_KW = 40;
+
+    const clamp = (x, a, b) => Math.max(a, Math.min(b, x));
+    const lerp = (a, b, t) => a + (b - a) * t;
+
+    function sharpen(shape, g) {
+      const s = shape.map((v) => Math.pow(v, g));
+      const sum = s.reduce((a, b) => a + b, 0);
+      return s.map((v) => v / sum);
+    }
+    const basicS = sharpen(BASIC_SHAPE, GAMMA);
+    const prodS = sharpen(PRODUCTIVE_SHAPE, GAMMA);
+    const basicDaily = KWH_B / (HPY / 24);
+    const prodDaily = KWH_P / (HPY / 24);
+
+    function shapeAt(shape, hourF) {
+      const h = ((hourF % 24) + 24) % 24;
+      const i0 = Math.floor(h) % 24;
+      const i1 = (i0 + 1) % 24;
+      return lerp(shape[i0], shape[i1], h - Math.floor(h));
+    }
+    function loadAt(hourF) {
+      const basic = N_BASIC * basicDaily * shapeAt(basicS, hourF);
+      const prod = N_PROD * prodDaily * shapeAt(prodS, hourF);
+      return { basic, prod, total: basic + prod };
+    }
+    function pvAt(hourF) {
+      const h = ((hourF % 24) + 24) % 24;
+      const rise = 5.75, set = 18.25;
+      if (h < rise || h > set) return 0;
+      const x = (h - rise) / (set - rise);
+      return PV_KWP * PV_DERATE * 0.92 * Math.pow(Math.sin(Math.PI * x), 1.15);
+    }
+    function phaseName(h) {
+      h = ((h % 24) + 24) % 24;
+      if (h < 5) return "Deep night · low residential baseline";
+      if (h < 7) return "Dawn · morning residential peak";
+      if (h < 9) return "Morning · cooking + mills start";
+      if (h < 12) return "Late morning · productive-use peak";
+      if (h < 14) return "Midday · PV peak, battery charging";
+      if (h < 17) return "Afternoon · shops/mills active";
+      if (h < 18.5) return "Evening ramp · PV fading, load rising";
+      if (h < 21) return "Evening peak · dominant residential demand";
+      if (h < 23) return "Late evening · demand falling";
+      return "Night · battery / diesel cover residual";
+    }
+    function fmtTime(hourF) {
+      const h = ((hourF % 24) + 24) % 24;
+      const hh = Math.floor(h);
+      const mm = Math.floor((h - hh) * 60);
+      return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}`;
+    }
+
+    function dispatch(hourF, socIn, dtH) {
+      const L = loadAt(hourF);
+      const pv = pvAt(hourF);
+      let soc = socIn, pBat = 0, diesel = 0, curt = 0;
+      const net = pv - L.total;
+      if (dtH > 0) {
+        if (net >= 0) {
+          const room = (SOC_MAX - soc) * BAT_KWH;
+          const chargeCap = Math.min(P_BAT, room / (ETA_C * dtH));
+          const charge = Math.min(net, Math.max(0, chargeCap));
+          pBat = -charge;
+          soc += (charge * ETA_C * dtH) / BAT_KWH;
+          curt = net - charge;
+        } else {
+          let need = -net;
+          const energy = Math.max(0, (soc - SOC_MIN) * BAT_KWH * ETA_D);
+          const disCap = Math.min(P_BAT, energy / dtH);
+          const dis = Math.min(need, Math.max(0, disCap));
+          pBat = dis;
+          soc -= (dis / ETA_D * dtH) / BAT_KWH;
+          need -= dis;
+          diesel = Math.min(need, DIESEL_KW);
+        }
+        soc = clamp(soc, SOC_MIN, SOC_MAX);
+      } else {
+        if (net >= 0) {
+          pBat = soc < SOC_MAX - 1e-4 ? -Math.min(net, P_BAT) : 0;
+          curt = net + pBat;
+        } else {
+          const need = -net;
+          pBat = soc > SOC_MIN + 1e-4 ? Math.min(need, P_BAT) : 0;
+          diesel = Math.min(need - pBat, DIESEL_KW);
+        }
+      }
+      return {
+        hourF, load: L.total, loadBasic: L.basic, loadProd: L.prod,
+        pv, pBat, diesel, curt: Math.max(0, curt), soc, phase: phaseName(hourF),
+      };
+    }
+
+    // hoursPerSec: simulated hours advanced per real second (default ~ full day in ~12 s)
+    const sim = { hourF: 6.0, soc: 0.55, playing: true, hoursPerSec: 2.0 };
+    let latest = dispatch(sim.hourF, sim.soc, 0);
+    let lastFrameMs = performance.now();
+
+    // UI meters
+    function updateMeters(s) {
+      $("clock").textContent = fmtTime(s.hourF);
+      $("phase").textContent = s.phase;
+      $("needle").style.left = `${(s.hourF / 24) * 100}%`;
+      const pct = (kw) => `${clamp((kw / 90) * 100, 0, 100)}%`;
+      $("b-pv").style.width = pct(s.pv);
+      $("b-load").style.width = pct(s.load);
+      $("b-bat").style.width = pct(Math.abs(s.pBat));
+      $("b-diesel").style.width = pct(s.diesel);
+      $("b-soc").style.width = `${s.soc * 100}%`;
+      $("v-pv").textContent = s.pv.toFixed(1);
+      $("v-load").textContent = s.load.toFixed(1);
+      $("v-bat").textContent = `${s.pBat >= 0 ? "+" : ""}${s.pBat.toFixed(1)}`;
+      $("v-diesel").textContent = s.diesel.toFixed(1);
+      $("v-soc").textContent = `${(s.soc * 100).toFixed(0)}%`;
+      $("bat-name").textContent = s.pBat > 0.5 ? "Discharge" : s.pBat < -0.5 ? "Charge" : "Battery";
+      $("leg-pv").textContent = `${s.pv.toFixed(0)} kW`;
+      $("leg-load").textContent = `${s.load.toFixed(0)} kW`;
+      $("leg-diesel").textContent = s.diesel > 0.3 ? `${s.diesel.toFixed(0)} kW ON` : "standby";
+      $("leg-bat").textContent = `${(s.soc * 100).toFixed(0)}% SoC`;
+
+      let msg;
+      if (s.pv > s.load + 1 && s.pBat < -0.5) {
+        const chg = Math.min(-s.pBat, s.pv);
+        msg = `<b>Solar charging BESS:</b> PV covers load · <span style="color:#a3e635">${chg.toFixed(1)} kW</span> flows PV → battery on the lime feeder${s.curt > 1 ? ` · ${s.curt.toFixed(0)} kW curtailed` : ""}.`;
+      } else if (s.diesel > 0.5)
+        msg = `<b>Diesel online:</b> ${s.diesel.toFixed(1)} kW last-resort residual.`;
+      else if (s.pv < 0.5 && s.pBat > 0.5)
+        msg = `<b>Night discharge:</b> battery meets ${s.load.toFixed(1)} kW load (BESS → bus).`;
+      else if (s.pv > 1 && s.pBat > 0.5)
+        msg = `<b>Partial solar:</b> PV + battery discharge serve the village.`;
+      else if (s.pBat < -0.5)
+        msg = `<b>Charging:</b> ${(-s.pBat).toFixed(1)} kW into BESS from available solar surplus.`;
+      else
+        msg = `<b>Live:</b> PV ${s.pv.toFixed(1)} · load ${s.load.toFixed(1)} · bat ${s.pBat.toFixed(1)} · diesel ${s.diesel.toFixed(1)} kW.`;
+      $("status").innerHTML = msg;
+    }
+    updateMeters(latest);
+
+    function applySpeed() {
+      const v = Number($("speed").value);
+      // Slider 1–40 → 0.5 … 8 sim-hours per real second (day ~ 3–48 s)
+      sim.hoursPerSec = 0.5 + (v / 40) * 7.5;
+      $("speed-label").textContent =
+        `${sim.hoursPerSec.toFixed(1)} h/s · full day ≈ ${(24 / sim.hoursPerSec).toFixed(0)}s`;
+    }
+    $("speed").addEventListener("input", applySpeed);
+    // Default slider 15 → ~3.3 h/s → day loops about every 7 seconds (obvious motion)
+    $("speed").value = "15";
+    applySpeed();
+    $("btn-play").addEventListener("click", () => {
+      sim.playing = !sim.playing;
+      $("btn-play").textContent = sim.playing ? "Pause" : "Play";
+      $("btn-play").classList.toggle("active", sim.playing);
+    });
+    $("btn-reset").addEventListener("click", () => {
+      sim.hourF = 0;
+      sim.soc = 0.55;
+      latest = dispatch(sim.hourF, sim.soc, 0);
+      updateMeters(latest);
+    });
+
+    /** Advance the 24 h simulation by real-time dt (seconds). Always safe. */
+    function tickSim(dtSec) {
+      if (!sim.playing) return latest;
+      // Cap so a tab-switch doesn't jump multiple days at once
+      const dt = Math.min(Math.max(dtSec, 0), 0.1);
+      const dtH = sim.hoursPerSec * dt;
+      if (dtH <= 0) return latest;
+      const n = Math.max(1, Math.ceil(dtH / 0.05));
+      const hStep = dtH / n;
+      for (let i = 0; i < n; i++) {
+        latest = dispatch(sim.hourF, sim.soc, hStep);
+        sim.hourF = (sim.hourF + hStep) % 24;
+        sim.soc = latest.soc;
+      }
+      latest.hourF = sim.hourF;
+      latest.phase = phaseName(sim.hourF);
+      return latest;
+    }
+
+    // Day cycle runs on its OWN loop (independent of Three.js).
+    // This is what drives the clock, meters, and feeds the 3D scene.
+    (function startDayCycleLoop() {
+      let prev = performance.now();
+      function loop(now) {
+        const dt = Math.min((now - prev) / 1000, 0.1);
+        prev = now;
+        tickSim(dt);
+        updateMeters(latest);
+        requestAnimationFrame(loop);
+      }
+      requestAnimationFrame(loop);
+    })();
+
+    // ═══════════════════════════════════════════════════════════════════════
+    // FULL 3D SCENE (first version richness + day cycle visuals)
+    // ═══════════════════════════════════════════════════════════════════════
+    async function main() {
+      if (location.protocol === "file:") return;
+
+      const THREE = await import("./vendor/three.module.js");
+      const { OrbitControls } = await import("./vendor/controls/OrbitControls.js");
+      const { CSS2DRenderer, CSS2DObject } = await import("./vendor/renderers/CSS2DRenderer.js");
+
+      const CATALOG = {
+        pv: {
+          tag: "Generation", title: "Solar PV array",
+          desc: "Temperature-corrected PV. Output follows the clear-sky day curve — zero at night, peak near solar noon.",
+          stats: { Capacity: "90 kWp", "Temp. coeff.": "−0.4 %/°C", Derate: "86 %", Resource: "5.28 kWh/m²/day" },
+          color: 0xf5c542,
+        },
+        battery: {
+          tag: "Storage", title: "Battery energy storage",
+          desc: "Charged by PV surplus on the dedicated lime charge feeder (PV → BESS). Discharges to the AC bus when load exceeds solar. Load has priority over charging.",
+          stats: { Energy: "130 kWh", Usable: "117 kWh", "Power max": "65 kW", "Round-trip η": "~90 %", "Charge source": "Solar PV surplus" },
+          color: 0x4ade80,
+        },
+        pvCharge: {
+          tag: "Energy path", title: "PV → BESS charge link",
+          desc: "Visible solar-charge path. When midday PV exceeds community load, surplus energy streams from the array into the battery along this feeder (merit order: serve load first, then charge).",
+          stats: { Direction: "PV → battery", When: "PV surplus + charge", "Not used": "Night / discharge" },
+          color: 0xa3e635,
+        },
+        diesel: {
+          tag: "Backup", title: "Diesel generator",
+          desc: "Last resort only — residual deficit after PV and battery. Offline in surplus.",
+          stats: { Rated: "40 kW", Cost: "5.28 GHS/kWh", Role: "Last resort", "Min load": "0 %" },
+          color: 0xf87171,
+        },
+        load: {
+          tag: "Demand", title: "Community load",
+          desc: "149 basic HH (bimodal evening peak) + 26 productive (daytime mills/shops). Shapes from load.py.",
+          stats: { Households: "175", Annual: "118,700 kWh", Basic: "evening-dominant", Productive: "daytime-dominant" },
+          color: 0xa78bfa,
+        },
+        ems: {
+          tag: "Control", title: "Forecast-driven EMS",
+          desc: "ML forecasts feed GA dispatch over 24 h, re-solved every 6 h. This view replays merit-order physics live.",
+          stats: { Horizon: "24 h", "Re-solve": "6 h", Merit: "PV → BESS → diesel", Mode: "day-cycle demo" },
+          color: 0x38bdf8,
+        },
+        bus: {
+          tag: "Network", title: "AC bus / PCC",
+          desc: "Islanded — no utility grid. All power balances here. Reliability = LPSP.",
+          stats: { Topology: "Islanded", Grid: "None", LPSP: "0.00 % target" },
+          color: 0x94a3b8,
+        },
+      };
+
+      const wrap = $("canvas-wrap");
+      const scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x0b1220);
+      scene.fog = new THREE.FogExp2(0x0b1220, 0.018);
+
+      const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 200);
+      camera.position.set(14, 11, 16);
+
+      const renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 1.05;
+      renderer.domElement.className = "webgl";
+      wrap.appendChild(renderer.domElement);
+
+      const labelRenderer = new CSS2DRenderer();
+      labelRenderer.domElement.style.position = "absolute";
+      labelRenderer.domElement.style.inset = "0";
+      labelRenderer.domElement.style.pointerEvents = "none";
+      wrap.appendChild(labelRenderer.domElement);
+
+      const controls = new OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+      controls.dampingFactor = 0.06;
+      controls.target.set(0, 1.2, 0);
+      controls.minDistance = 6;
+      controls.maxDistance = 40;
+      controls.maxPolarAngle = Math.PI * 0.48;
+      controls.autoRotate = true;
+      controls.autoRotateSpeed = 0.5;
+
+      const hemi = new THREE.HemisphereLight(0xb8d4ff, 0x1a1520, 0.55);
+      scene.add(hemi);
+      const sun = new THREE.DirectionalLight(0xfff2d6, 1.35);
+      sun.position.set(12, 18, 8);
+      sun.castShadow = true;
+      sun.shadow.mapSize.set(2048, 2048);
+      sun.shadow.camera.near = 1;
+      sun.shadow.camera.far = 50;
+      sun.shadow.camera.left = -18;
+      sun.shadow.camera.right = 18;
+      sun.shadow.camera.top = 18;
+      sun.shadow.camera.bottom = -18;
+      scene.add(sun);
+      const fill = new THREE.DirectionalLight(0x6aa8ff, 0.25);
+      fill.position.set(-10, 6, -8);
+      scene.add(fill);
+      scene.add(new THREE.AmbientLight(0x304060, 0.35));
+
+      const ground = new THREE.Mesh(
+        new THREE.CircleGeometry(22, 64),
+        new THREE.MeshStandardMaterial({ color: 0x1a2438, roughness: 0.92, metalness: 0.05 })
+      );
+      ground.rotation.x = -Math.PI / 2;
+      ground.receiveShadow = true;
+      scene.add(ground);
+
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(10.5, 14.5, 64),
+        new THREE.MeshStandardMaterial({ color: 0x2a3348, roughness: 1, side: THREE.DoubleSide })
+      );
+      ring.rotation.x = -Math.PI / 2;
+      ring.position.y = 0.01;
+      scene.add(ring);
+
+      const grid = new THREE.GridHelper(28, 28, 0x2a3a55, 0x1c283c);
+      grid.position.y = 0.02;
+      scene.add(grid);
+
+      function mat(color, opts = {}) {
+        return new THREE.MeshStandardMaterial({
+          color,
+          roughness: opts.roughness ?? 0.45,
+          metalness: opts.metalness ?? 0.25,
+          emissive: opts.emissive ?? 0x000000,
+          emissiveIntensity: opts.emissiveIntensity ?? 0,
+          transparent: opts.transparent ?? false,
+          opacity: opts.opacity ?? 1,
+          side: opts.side ?? THREE.FrontSide,
+        });
+      }
+
+      function makeLabel(text, color = "#e8eef9") {
+        const el = document.createElement("div");
+        el.textContent = text;
+        el.style.cssText = `
+          font-size: 11px; font-weight: 600; color: ${color};
+          background: rgba(8,14,28,0.78); border: 1px solid rgba(255,255,255,0.12);
+          padding: 3px 8px; border-radius: 6px; white-space: nowrap;
+          box-shadow: 0 4px 14px rgba(0,0,0,0.35); pointer-events: none; user-select: none;
+        `;
+        return new CSS2DObject(el);
+      }
+
+      const pickables = [];
+      function register(id, group) {
+        group.userData.id = id;
+        group.traverse((o) => {
+          if (o.isMesh) { o.userData.id = id; pickables.push(o); }
+        });
+        scene.add(group);
+      }
+
+      // ── PV ───────────────────────────────────────────────────────────────
+      const pvGroup = new THREE.Group();
+      pvGroup.position.set(-5.5, 0, -3.5);
+      {
+        const base = new THREE.Mesh(new THREE.BoxGeometry(5.2, 0.15, 3.4), mat(0x2a3344, { roughness: 0.8 }));
+        base.position.y = 0.08;
+        base.castShadow = true;
+        base.receiveShadow = true;
+        pvGroup.add(base);
+      }
+      const panelMat = mat(0x1a3a6e, { metalness: 0.55, roughness: 0.25, emissive: 0x0a2040, emissiveIntensity: 0.35 });
+      const frameMat = mat(0x8899aa, { metalness: 0.7, roughness: 0.35 });
+      for (let r = 0; r < 3; r++) {
+        for (let c = 0; c < 4; c++) {
+          const rack = new THREE.Group();
+          rack.position.set(-1.8 + c * 1.2, 0.55, -1.0 + r * 1.0);
+          rack.rotation.x = -Math.PI / 5.5;
+          const panel = new THREE.Mesh(new THREE.BoxGeometry(1.05, 0.04, 0.72), panelMat);
+          panel.castShadow = true;
+          rack.add(panel);
+          const frame = new THREE.Mesh(new THREE.BoxGeometry(1.1, 0.02, 0.76), frameMat);
+          frame.position.y = -0.03;
+          rack.add(frame);
+          const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.04, 0.7, 8), mat(0x667788));
+          leg.position.set(0, -0.35, 0.2);
+          leg.rotation.x = Math.PI / 5.5;
+          leg.castShadow = true;
+          rack.add(leg);
+          pvGroup.add(rack);
+        }
+      }
+      {
+        const inv = new THREE.Mesh(new THREE.BoxGeometry(0.55, 0.7, 0.35), mat(0x3d4a5c, { metalness: 0.5 }));
+        inv.position.set(2.2, 0.4, 1.3);
+        inv.castShadow = true;
+        pvGroup.add(inv);
+      }
+      const lblPv = makeLabel("PV 90 kWp", "#f5c542");
+      lblPv.position.set(0, 2.1, 0);
+      pvGroup.add(lblPv);
+      register("pv", pvGroup);
+
+      // ── Battery ──────────────────────────────────────────────────────────
+      const batGroup = new THREE.Group();
+      batGroup.position.set(-4.2, 0, 3.8);
+      {
+        const pad = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.12, 2.2), mat(0x243044, { roughness: 0.85 }));
+        pad.position.y = 0.06;
+        pad.receiveShadow = true;
+        batGroup.add(pad);
+      }
+      const container = new THREE.Mesh(
+        new THREE.BoxGeometry(2.6, 1.5, 1.5),
+        mat(0x1f3d2a, { metalness: 0.35, roughness: 0.4, emissive: 0x0a2a14, emissiveIntensity: 0.2 })
+      );
+      container.position.y = 0.85;
+      container.castShadow = true;
+      batGroup.add(container);
+      const strip = new THREE.Mesh(
+        new THREE.BoxGeometry(2.2, 0.12, 0.04),
+        mat(0x4ade80, { emissive: 0x4ade80, emissiveIntensity: 0.8 })
+      );
+      strip.position.set(0, 1.2, 0.77);
+      batGroup.add(strip);
+      for (let i = 0; i < 4; i++) {
+        const cell = new THREE.Mesh(
+          new THREE.BoxGeometry(0.45, 0.9, 0.08),
+          mat(0x2d5a3d, { metalness: 0.4, emissive: 0x1a3a24, emissiveIntensity: 0.15 })
+        );
+        cell.position.set(-0.9 + i * 0.6, 0.85, 0.78);
+        batGroup.add(cell);
+      }
+      const socBarMat = mat(0x4ade80, { emissive: 0x4ade80, emissiveIntensity: 0.9 });
+      const socBar = new THREE.Mesh(new THREE.BoxGeometry(0.15, 1.2, 0.15), socBarMat);
+      socBar.position.set(1.6, 0.25, 0);
+      socBar.geometry.translate(0, 0.6, 0);
+      batGroup.add(socBar);
+      const lblBat = makeLabel("BESS 130 kWh", "#4ade80");
+      lblBat.position.set(0, 2.3, 0);
+      batGroup.add(lblBat);
+      register("battery", batGroup);
+
+      // ── Diesel ───────────────────────────────────────────────────────────
+      const dieselGroup = new THREE.Group();
+      dieselGroup.position.set(4.5, 0, 3.5);
+      {
+        const dPad = new THREE.Mesh(new THREE.BoxGeometry(2.8, 0.12, 2.0), mat(0x2a2430, { roughness: 0.9 }));
+        dPad.position.y = 0.06;
+        dieselGroup.add(dPad);
+      }
+      const genBody = new THREE.Mesh(
+        new THREE.BoxGeometry(2.0, 1.1, 1.2),
+        mat(0x5a3030, { metalness: 0.45, roughness: 0.45, emissive: 0x2a1010, emissiveIntensity: 0.15 })
+      );
+      genBody.position.y = 0.7;
+      genBody.castShadow = true;
+      dieselGroup.add(genBody);
+      const engine = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.35, 0.4, 1.4, 16),
+        mat(0x6b3a3a, { metalness: 0.6, roughness: 0.35 })
+      );
+      engine.rotation.z = Math.PI / 2;
+      engine.position.set(0, 0.85, 0);
+      engine.castShadow = true;
+      dieselGroup.add(engine);
+      {
+        const stack = new THREE.Mesh(new THREE.CylinderGeometry(0.08, 0.1, 1.6, 10), mat(0x44444c, { metalness: 0.7 }));
+        stack.position.set(0.6, 1.9, -0.3);
+        stack.castShadow = true;
+        dieselGroup.add(stack);
+        const muffler = new THREE.Mesh(new THREE.SphereGeometry(0.18, 12, 12), mat(0x55555e, { metalness: 0.65 }));
+        muffler.position.set(0.6, 2.65, -0.3);
+        dieselGroup.add(muffler);
+      }
+      const warn = new THREE.Mesh(
+        new THREE.SphereGeometry(0.08, 12, 12),
+        mat(0xf87171, { emissive: 0xf87171, emissiveIntensity: 0.3 })
+      );
+      warn.position.set(-0.7, 1.35, 0.55);
+      dieselGroup.add(warn);
+      {
+        const fuelTank = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.55, 0.7), mat(0x3a3030, { metalness: 0.4 }));
+        fuelTank.position.set(-1.0, 0.4, 0);
+        fuelTank.castShadow = true;
+        dieselGroup.add(fuelTank);
+      }
+      const smokes = [];
+      for (let i = 0; i < 12; i++) {
+        const s = new THREE.Mesh(
+          new THREE.SphereGeometry(0.12, 8, 8),
+          mat(0x888888, { transparent: true, opacity: 0, roughness: 1, metalness: 0 })
+        );
+        s.userData.t = i / 12;
+        dieselGroup.add(s);
+        smokes.push(s);
+      }
+      const lblDiesel = makeLabel("Diesel 40 kW", "#f87171");
+      lblDiesel.position.set(0, 3.1, 0);
+      dieselGroup.add(lblDiesel);
+      register("diesel", dieselGroup);
+
+      // ── Village load ─────────────────────────────────────────────────────
+      const loadGroup = new THREE.Group();
+      loadGroup.position.set(5.2, 0, -3.2);
+      {
+        const villagePad = new THREE.Mesh(new THREE.CircleGeometry(2.8, 32), mat(0x1e2a1e, { roughness: 0.95 }));
+        villagePad.rotation.x = -Math.PI / 2;
+        villagePad.position.y = 0.03;
+        loadGroup.add(villagePad);
+      }
+      const houseWindows = [];
+      function house(x, z, scale, productive) {
+        const g = new THREE.Group();
+        g.position.set(x, 0, z);
+        g.scale.setScalar(scale);
+        const wall = new THREE.Mesh(
+          new THREE.BoxGeometry(0.7, 0.55, 0.55),
+          mat(productive ? 0x4a3a5c : 0x3a4558, { roughness: 0.75 })
+        );
+        wall.position.y = 0.35;
+        wall.castShadow = true;
+        g.add(wall);
+        const roof = new THREE.Mesh(
+          new THREE.ConeGeometry(0.55, 0.35, 4),
+          mat(productive ? 0x7c5cbf : 0x8b5a3c, { roughness: 0.7 })
+        );
+        roof.position.y = 0.78;
+        roof.rotation.y = Math.PI / 4;
+        roof.castShadow = true;
+        g.add(roof);
+        const winMat = mat(0xf5d76e, { emissive: 0xf5d76e, emissiveIntensity: 0.2 });
+        const win = new THREE.Mesh(new THREE.BoxGeometry(0.18, 0.15, 0.02), winMat);
+        win.position.set(0, 0.38, 0.28);
+        g.add(win);
+        houseWindows.push({ mat: winMat, productive });
+        loadGroup.add(g);
+      }
+      [
+        [-1.4, -0.8], [-0.5, -1.3], [0.4, -1.1], [1.3, -0.7],
+        [-1.2, 0.2], [-0.3, 0.5], [0.6, 0.3], [1.4, 0.6],
+        [-0.8, 1.2], [0.2, 1.4], [1.1, 1.1],
+      ].forEach(([x, z], i) => house(x, z, 0.85 + (i % 3) * 0.05, false));
+      [[-1.6, -1.6], [1.6, -1.5], [1.7, 1.5], [-1.5, 1.6]].forEach(([x, z]) => house(x, z, 1.15, true));
+
+      const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.04, 0.05, 2.2, 8), mat(0x555560));
+      pole.position.set(0, 1.1, 0);
+      pole.castShadow = true;
+      loadGroup.add(pole);
+      const lampMat = mat(0xffe8a0, { emissive: 0xffd060, emissiveIntensity: 0.4 });
+      const lamp = new THREE.Mesh(new THREE.SphereGeometry(0.12, 12, 12), lampMat);
+      lamp.position.set(0, 2.2, 0);
+      loadGroup.add(lamp);
+      const lampLight = new THREE.PointLight(0xffd080, 0.5, 8);
+      lampLight.position.set(0, 2.1, 0);
+      loadGroup.add(lampLight);
+      const activityRing = new THREE.Mesh(
+        new THREE.RingGeometry(2.5, 2.75, 48),
+        mat(0xa78bfa, { emissive: 0xa78bfa, emissiveIntensity: 0.3, transparent: true, opacity: 0.5, side: THREE.DoubleSide })
+      );
+      activityRing.rotation.x = -Math.PI / 2;
+      activityRing.position.y = 0.04;
+      loadGroup.add(activityRing);
+      const lblLoad = makeLabel("Load · 175 HH", "#a78bfa");
+      lblLoad.position.set(0, 3.0, 0);
+      loadGroup.add(lblLoad);
+      register("load", loadGroup);
+
+      // ── AC bus ───────────────────────────────────────────────────────────
+      const busGroup = new THREE.Group();
+      busGroup.position.set(0, 0, 0.3);
+      {
+        const busPlatform = new THREE.Mesh(
+          new THREE.CylinderGeometry(1.1, 1.25, 0.2, 32),
+          mat(0x3a4558, { metalness: 0.5, roughness: 0.4 })
+        );
+        busPlatform.position.y = 0.12;
+        busPlatform.castShadow = true;
+        busGroup.add(busPlatform);
+      }
+      const busCore = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.55, 0.55, 1.4, 24),
+        mat(0x64748b, { metalness: 0.65, roughness: 0.3, emissive: 0x334155, emissiveIntensity: 0.25 })
+      );
+      busCore.position.y = 0.95;
+      busCore.castShadow = true;
+      busGroup.add(busCore);
+      for (let i = 0; i < 3; i++) {
+        const ringM = new THREE.Mesh(
+          new THREE.TorusGeometry(0.62, 0.04, 8, 32),
+          mat(0x94a3b8, { metalness: 0.8, emissive: 0x64748b, emissiveIntensity: 0.3 })
+        );
+        ringM.rotation.x = Math.PI / 2;
+        ringM.position.y = 0.5 + i * 0.35;
+        busGroup.add(ringM);
+      }
+      {
+        const busTop = new THREE.Mesh(
+          new THREE.SphereGeometry(0.28, 16, 16),
+          mat(0xcbd5e1, { metalness: 0.7, emissive: 0x94a3b8, emissiveIntensity: 0.4 })
+        );
+        busTop.position.y = 1.85;
+        busGroup.add(busTop);
+      }
+      const lblBus = makeLabel("AC bus (islanded)", "#94a3b8");
+      lblBus.position.set(0, 2.5, 0);
+      busGroup.add(lblBus);
+      register("bus", busGroup);
+
+      // ── EMS brain ────────────────────────────────────────────────────────
+      const emsGroup = new THREE.Group();
+      emsGroup.position.set(0, 5.2, 0);
+      const emsCore = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(0.85, 1),
+        mat(0x0ea5e9, {
+          metalness: 0.3, roughness: 0.2, emissive: 0x0284c7, emissiveIntensity: 0.55,
+          transparent: true, opacity: 0.85,
+        })
+      );
+      emsCore.castShadow = true;
+      emsGroup.add(emsCore);
+      const emsShell = new THREE.Mesh(
+        new THREE.IcosahedronGeometry(1.15, 1),
+        new THREE.MeshStandardMaterial({
+          color: 0x38bdf8, wireframe: true, transparent: true, opacity: 0.45,
+          emissive: 0x0ea5e9, emissiveIntensity: 0.3,
+        })
+      );
+      emsGroup.add(emsShell);
+      const orbitNodes = [];
+      ["Forecast", "GA dispatch", "GT replay"].forEach((name, i) => {
+        const node = new THREE.Mesh(
+          new THREE.OctahedronGeometry(0.18, 0),
+          mat(0x7dd3fc, { emissive: 0x38bdf8, emissiveIntensity: 0.8 })
+        );
+        node.userData.baseAngle = (i / 3) * Math.PI * 2;
+        node.userData.radius = 1.7;
+        orbitNodes.push(node);
+        emsGroup.add(node);
+        const nlab = makeLabel(name, "#7dd3fc");
+        nlab.position.set(0, 0.35, 0);
+        node.add(nlab);
+      });
+      const lblEms = makeLabel("EMS · 24 h / 6 h", "#38bdf8");
+      lblEms.position.set(0, 1.9, 0);
+      emsGroup.add(lblEms);
+      register("ems", emsGroup);
+      const emsLight = new THREE.PointLight(0x38bdf8, 1.2, 12);
+      emsLight.position.set(0, 5.2, 0);
+      scene.add(emsLight);
+
+      // ── Power cables ─────────────────────────────────────────────────────
+      function cable(from, to, color, opts = {}) {
+        const y0 = opts.y0 ?? 0.15;
+        const y1 = opts.y1 ?? y0;
+        const lift = opts.lift ?? 0.35;
+        const radius = opts.radius ?? 0.04;
+        const a = from.clone(); a.y = y0;
+        const b = to.clone(); b.y = y1;
+        // Optional sideways bulge so parallel cables don't stack
+        const mid = a.clone().lerp(b, 0.5);
+        mid.y += lift;
+        if (opts.bulge) {
+          const side = new THREE.Vector3().subVectors(b, a);
+          const up = new THREE.Vector3(0, 1, 0);
+          const lat = new THREE.Vector3().crossVectors(side, up);
+          if (lat.lengthSq() > 1e-8) {
+            lat.normalize().multiplyScalar(opts.bulge);
+            mid.add(lat);
+          }
+        }
+        const curve = new THREE.QuadraticBezierCurve3(a, mid, b);
+        const mesh = new THREE.Mesh(
+          new THREE.TubeGeometry(curve, 40, radius, 8, false),
+          mat(color, {
+            metalness: 0.55,
+            roughness: 0.35,
+            emissive: color,
+            emissiveIntensity: opts.emissiveIntensity ?? 0.15,
+          })
+        );
+        mesh.castShadow = true;
+        scene.add(mesh);
+        return { curve, mesh, color };
+      }
+      const busPos = busGroup.position.clone();
+      // PV and BESS sit on the same side of the plant — add an explicit
+      // charge feeder so solar surplus is visibly stored, not only via the AC bus.
+      const pvAnchor = pvGroup.position.clone().add(new THREE.Vector3(0.8, 0, 0.6));
+      const batAnchor = batGroup.position.clone().add(new THREE.Vector3(-0.4, 0, -0.5));
+      const cables = {
+        pv: cable(pvGroup.position, busPos, 0xf5c542),
+        bat: cable(batGroup.position, busPos, 0x4ade80),
+        // Direct PV → BESS charge path (physics: surplus PV after load charges battery)
+        pvCharge: cable(pvAnchor, batAnchor, 0xa3e635, {
+          y0: 0.55,
+          y1: 0.9,
+          lift: 1.35,
+          bulge: -1.1,
+          radius: 0.055,
+          emissiveIntensity: 0.08,
+        }),
+        diesel: cable(dieselGroup.position, busPos, 0xf87171),
+        load: cable(loadGroup.position, busPos, 0xa78bfa),
+      };
+
+      // Charge-link markers: glowing ends + floating label
+      const chargeLinkGroup = new THREE.Group();
+      scene.add(chargeLinkGroup);
+      const chargeInverter = new THREE.Mesh(
+        new THREE.BoxGeometry(0.45, 0.35, 0.3),
+        mat(0x3d4a5c, { metalness: 0.5, emissive: 0xf5c542, emissiveIntensity: 0.2 })
+      );
+      chargeInverter.position.copy(pvAnchor);
+      chargeInverter.position.y = 0.45;
+      chargeLinkGroup.add(chargeInverter);
+      const chargePort = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.12, 0.14, 0.2, 12),
+        mat(0x4ade80, { metalness: 0.4, emissive: 0x4ade80, emissiveIntensity: 0.4 })
+      );
+      chargePort.position.copy(batAnchor);
+      chargePort.position.y = 0.95;
+      chargeLinkGroup.add(chargePort);
+      // Arrow-ish chevrons along the charge cable (static guides)
+      const chargeChevrons = [];
+      for (let i = 1; i <= 5; i++) {
+        const chev = new THREE.Mesh(
+          new THREE.ConeGeometry(0.1, 0.22, 4),
+          mat(0xbef264, { emissive: 0xa3e635, emissiveIntensity: 0.5, transparent: true, opacity: 0.35 })
+        );
+        const t = i / 6;
+        chev.position.copy(cables.pvCharge.curve.getPoint(t));
+        const tan = cables.pvCharge.curve.getTangent(t).normalize();
+        chev.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), tan);
+        chargeLinkGroup.add(chev);
+        chargeChevrons.push(chev);
+      }
+      const lblCharge = makeLabel("PV → BESS charge", "#bef264");
+      lblCharge.position.copy(cables.pvCharge.curve.getPoint(0.5));
+      lblCharge.position.y += 0.55;
+      chargeLinkGroup.add(lblCharge);
+      // Also put the charge tube into the pickable charge group for click/highlight
+      cables.pvCharge.mesh.userData.id = "pvCharge";
+      pickables.push(cables.pvCharge.mesh);
+      register("pvCharge", chargeLinkGroup);
+
+      // ── Energy flow particles (lively + interactive) ───────────────────
+      const flowGroup = new THREE.Group();
+      scene.add(flowGroup);
+      const flowParticles = [];
+      const trailParticles = [];
+      const sparkPool = [];
+      const burstRipples = [];
+
+      // Soft additive glow material for energy orbs
+      function energyMat(color, opacity = 0.95) {
+        return new THREE.MeshBasicMaterial({
+          color,
+          transparent: true,
+          opacity,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+        });
+      }
+
+      const ROUTE_META = {
+        pv: { color: 0xf5c542, name: "PV → bus", hex: "#f5c542" },
+        bat: { color: 0x4ade80, name: "Battery ↔ bus", hex: "#4ade80" },
+        pvCharge: { color: 0xa3e635, name: "PV → BESS (charging)", hex: "#a3e635" },
+        diesel: { color: 0xf87171, name: "Diesel → bus", hex: "#f87171" },
+        load: { color: 0xa78bfa, name: "Bus → load", hex: "#a78bfa" },
+      };
+
+      // Cursor world point (projected onto ground plane y=0.6 for attract/repel)
+      const mouseWorld = new THREE.Vector3(0, 0.6, 0);
+      const mouseNdc = new THREE.Vector2(2, 2); // off-screen until moved
+      let mouseInCanvas = false;
+      let attractOn = true;
+      let hoverParticle = null;
+      let clickPulse = 0; // 0..1 flash after click burst
+
+      // Floating HUD for hovered particle
+      const hoverHud = document.createElement("div");
+      hoverHud.style.cssText = `
+        position:absolute; z-index:20; display:none; pointer-events:none;
+        font-size:11px; font-weight:600; color:#fff; padding:6px 10px;
+        background:rgba(8,14,28,0.9); border:1px solid rgba(120,170,255,0.35);
+        border-radius:8px; box-shadow:0 8px 24px rgba(0,0,0,0.45);
+        white-space:nowrap; transform:translate(-50%,-130%);
+      `;
+      wrap.appendChild(hoverHud);
+
+      function makeFlow(curve, color, count, routeId) {
+        for (let i = 0; i < count; i++) {
+          const core = new THREE.Mesh(
+            new THREE.SphereGeometry(0.09, 12, 12),
+            energyMat(color, 0.95)
+          );
+          // Outer halo
+          const halo = new THREE.Mesh(
+            new THREE.SphereGeometry(0.16, 10, 10),
+            energyMat(color, 0.28)
+          );
+          core.add(halo);
+
+          // Tiny sparkle ring
+          const ring = new THREE.Mesh(
+            new THREE.TorusGeometry(0.12, 0.015, 6, 16),
+            energyMat(0xffffff, 0.35)
+          );
+          ring.rotation.x = Math.PI / 2;
+          core.add(ring);
+
+          core.userData = {
+            curve,
+            t: (i / count) + Math.random() * 0.02,
+            routeId,
+            color,
+            baseSpeed: 0.7 + Math.random() * 0.6,
+            phase: Math.random() * Math.PI * 2,
+            spin: (Math.random() - 0.5) * 4,
+            orbitR: 0.04 + Math.random() * 0.12,
+            orbitAng: Math.random() * Math.PI * 2,
+            orbitSpeed: 1.5 + Math.random() * 3,
+            wobble: 0.5 + Math.random() * 1.5,
+            jitter: (Math.random() - 0.5) * 0.02,
+            size: 0.75 + Math.random() * 0.55,
+            halo,
+            ring,
+            trailIdx: [],
+            boost: 0, // click / hover boost
+            kind: "core",
+          };
+          core.visible = false;
+          flowGroup.add(core);
+          flowParticles.push(core);
+
+          // Motion trails (ghost orbs lagging behind)
+          for (let k = 0; k < 4; k++) {
+            const trail = new THREE.Mesh(
+              new THREE.SphereGeometry(0.06 - k * 0.01, 8, 8),
+              energyMat(color, 0.35 - k * 0.07)
+            );
+            trail.userData = { parent: core, lag: (k + 1) * 0.018, kind: "trail" };
+            trail.visible = false;
+            flowGroup.add(trail);
+            trailParticles.push(trail);
+            core.userData.trailIdx.push(trailParticles.length - 1);
+          }
+        }
+      }
+      makeFlow(cables.pv.curve, 0xf5c542, 24, "pv");
+      makeFlow(cables.bat.curve, 0x4ade80, 20, "bat");
+      // Dedicated solar-charge stream (PV surplus → battery)
+      makeFlow(cables.pvCharge.curve, 0xa3e635, 32, "pvCharge");
+      makeFlow(cables.diesel.curve, 0xf87171, 16, "diesel");
+      makeFlow(cables.load.curve, 0xa78bfa, 24, "load");
+
+      // Spark burst pool (spawned on click / high power)
+      for (let i = 0; i < 80; i++) {
+        const sp = new THREE.Mesh(
+          new THREE.SphereGeometry(0.04, 6, 6),
+          energyMat(0xffffff, 0.9)
+        );
+        sp.visible = false;
+        sp.userData = { alive: false, life: 0, vel: new THREE.Vector3(), color: 0xffffff };
+        flowGroup.add(sp);
+        sparkPool.push(sp);
+      }
+
+      // Expanding ripple rings on bus when energy "arrives"
+      for (let i = 0; i < 6; i++) {
+        const rip = new THREE.Mesh(
+          new THREE.RingGeometry(0.15, 0.22, 32),
+          energyMat(0xffffff, 0)
+        );
+        rip.rotation.x = -Math.PI / 2;
+        rip.position.set(0, 0.25, 0.3);
+        rip.visible = false;
+        rip.userData = { life: 0, maxLife: 0.7, color: 0xffffff };
+        scene.add(rip);
+        burstRipples.push(rip);
+      }
+
+      function spawnSparks(origin, color, n = 12, speed = 2.5) {
+        let spawned = 0;
+        for (const sp of sparkPool) {
+          if (sp.userData.alive) continue;
+          sp.userData.alive = true;
+          sp.userData.life = 0.35 + Math.random() * 0.45;
+          sp.userData.maxLife = sp.userData.life;
+          sp.userData.color = color;
+          sp.material.color.setHex(color);
+          sp.position.copy(origin);
+          const th = Math.random() * Math.PI * 2;
+          const ph = Math.random() * Math.PI;
+          const s = speed * (0.4 + Math.random());
+          sp.userData.vel.set(
+            Math.sin(ph) * Math.cos(th) * s,
+            Math.abs(Math.cos(ph)) * s * 0.8 + 0.5,
+            Math.sin(ph) * Math.sin(th) * s
+          );
+          sp.visible = true;
+          sp.scale.setScalar(0.6 + Math.random());
+          if (++spawned >= n) break;
+        }
+      }
+
+      function spawnRipple(color) {
+        for (const rip of burstRipples) {
+          if (rip.userData.life > 0) continue;
+          rip.userData.life = rip.userData.maxLife;
+          rip.userData.color = color;
+          rip.material.color.setHex(color);
+          rip.material.opacity = 0.7;
+          rip.scale.setScalar(0.4);
+          rip.visible = true;
+          rip.position.set(0, 0.25, 0.3);
+          break;
+        }
+      }
+
+      // Ambient floating ambient dust near cables (always a bit of life)
+      const dust = [];
+      for (let i = 0; i < 40; i++) {
+        const d = new THREE.Mesh(
+          new THREE.SphereGeometry(0.03, 6, 6),
+          energyMat(0x88aaff, 0.25)
+        );
+        d.userData = {
+          base: new THREE.Vector3(
+            (Math.random() - 0.5) * 12,
+            0.3 + Math.random() * 2.5,
+            (Math.random() - 0.5) * 10
+          ),
+          phase: Math.random() * Math.PI * 2,
+          amp: 0.15 + Math.random() * 0.35,
+          speed: 0.4 + Math.random() * 0.8,
+        };
+        d.position.copy(d.userData.base);
+        flowGroup.add(d);
+        dust.push(d);
+      }
+
+      // ── EMS data links ───────────────────────────────────────────────────
+      const emsLinks = new THREE.Group();
+      scene.add(emsLinks);
+      const packets = [];
+      [pvGroup, batGroup, dieselGroup, loadGroup, busGroup].forEach((g) => {
+        const target = g.position;
+        const points = [
+          new THREE.Vector3(0, 5.2, 0),
+          new THREE.Vector3(target.x * 0.3, 3.2, target.z * 0.3),
+          new THREE.Vector3(target.x, 1.5, target.z),
+        ];
+        const curve = new THREE.CatmullRomCurve3(points);
+        const geo = new THREE.BufferGeometry().setFromPoints(curve.getPoints(40));
+        const line = new THREE.Line(
+          geo,
+          new THREE.LineDashedMaterial({
+            color: 0x38bdf8, dashSize: 0.15, gapSize: 0.1, transparent: true, opacity: 0.45,
+          })
+        );
+        line.computeLineDistances();
+        emsLinks.add(line);
+        for (let i = 0; i < 3; i++) {
+          const pkt = new THREE.Mesh(
+            new THREE.BoxGeometry(0.08, 0.08, 0.08),
+            mat(0x7dd3fc, { emissive: 0x38bdf8, emissiveIntensity: 1 })
+          );
+          pkt.userData = { curve, t: i / 3, speed: 0.14 };
+          emsLinks.add(pkt);
+          packets.push(pkt);
+        }
+      });
+
+      // Sun disc + stars
+      const sunDisc = new THREE.Mesh(
+        new THREE.SphereGeometry(0.8, 24, 24),
+        mat(0xffe08a, { emissive: 0xffc040, emissiveIntensity: 1.5, roughness: 0.2 })
+      );
+      scene.add(sunDisc);
+
+      const starPos = new Float32Array(400 * 3);
+      for (let i = 0; i < 400; i++) {
+        const r = 40 + Math.random() * 20;
+        const theta = Math.random() * Math.PI * 2;
+        const phi = Math.random() * Math.PI * 0.45;
+        starPos[i * 3] = r * Math.sin(phi) * Math.cos(theta);
+        starPos[i * 3 + 1] = r * Math.cos(phi) + 5;
+        starPos[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta);
+      }
+      const stars = new THREE.Points(
+        new THREE.BufferGeometry().setAttribute("position", new THREE.BufferAttribute(starPos, 3)),
+        new THREE.PointsMaterial({ color: 0xaaccff, size: 0.12, transparent: true, opacity: 0 })
+      );
+      scene.add(stars);
+
+      // ── Picking / UI toggles ──────────────────────────────────────────────
+      const raycaster = new THREE.Raycaster();
+      const pointer = new THREE.Vector2();
+      let selectedId = null;
+      const originalEmissive = new Map();
+
+      function storeEmissive(obj) {
+        if (!obj.material?.emissive) return;
+        if (!originalEmissive.has(obj.uuid)) {
+          originalEmissive.set(obj.uuid, {
+            color: obj.material.emissive.clone(),
+            intensity: obj.material.emissiveIntensity ?? 0,
+          });
+        }
+      }
+      function highlight(id) {
+        pickables.forEach((m) => {
+          storeEmissive(m);
+          const orig = originalEmissive.get(m.uuid);
+          if (!orig) return;
+          if (id && m.userData.id === id) {
+            m.material.emissive.setHex(CATALOG[id]?.color ?? 0xffffff);
+            m.material.emissiveIntensity = Math.max(orig.intensity, 0.35) + 0.45;
+          } else {
+            m.material.emissive.copy(orig.color);
+            m.material.emissiveIntensity = orig.intensity;
+          }
+        });
+        document.querySelectorAll(".leg-item").forEach((el) => {
+          el.classList.toggle("active", el.dataset.id === id);
+        });
+      }
+      function showDetail(id) {
+        const info = CATALOG[id];
+        if (!info) return;
+        selectedId = id;
+        highlight(id);
+        $("detail-tag").textContent = info.tag;
+        $("detail-title").textContent = info.title;
+        $("detail-desc").textContent = info.desc;
+        const dl = $("detail-stats");
+        dl.innerHTML = "";
+        Object.entries(info.stats).forEach(([k, v]) => {
+          const dt = document.createElement("dt"); dt.textContent = k;
+          const dd = document.createElement("dd"); dd.textContent = v;
+          dl.append(dt, dd);
+        });
+        $("detail").classList.add("visible");
+      }
+      function clearDetail() {
+        selectedId = null;
+        highlight(null);
+        $("detail").classList.remove("visible");
+      }
+      $("detail-close").addEventListener("click", clearDetail);
+      document.querySelectorAll(".leg-item").forEach((el) => {
+        el.addEventListener("click", () => {
+          const id = el.dataset.id;
+          if (selectedId === id) clearDetail(); else showDetail(id);
+        });
+      });
+      function updateMouseWorld(clientX, clientY) {
+        const rect = renderer.domElement.getBoundingClientRect();
+        mouseNdc.x = ((clientX - rect.left) / rect.width) * 2 - 1;
+        mouseNdc.y = -((clientY - rect.top) / rect.height) * 2 + 1;
+        raycaster.setFromCamera(mouseNdc, camera);
+        // Intersect horizontal plane at y=0.6 (cable height)
+        const plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -0.6);
+        const hit = new THREE.Vector3();
+        if (raycaster.ray.intersectPlane(plane, hit)) {
+          mouseWorld.copy(hit);
+        }
+      }
+
+      renderer.domElement.addEventListener("pointermove", (e) => {
+        mouseInCanvas = true;
+        updateMouseWorld(e.clientX, e.clientY);
+        // Hover particle detect
+        pointer.x = mouseNdc.x;
+        pointer.y = mouseNdc.y;
+        raycaster.setFromCamera(pointer, camera);
+        const cores = flowParticles.filter((p) => p.visible);
+        const hits = raycaster.intersectObjects(cores, false);
+        if (hits.length) {
+          hoverParticle = hits[0].object;
+          renderer.domElement.style.cursor = "pointer";
+        } else {
+          hoverParticle = null;
+          renderer.domElement.style.cursor = "grab";
+        }
+      });
+      renderer.domElement.addEventListener("pointerleave", () => {
+        mouseInCanvas = false;
+        hoverParticle = null;
+        hoverHud.style.display = "none";
+        renderer.domElement.style.cursor = "default";
+      });
+
+      renderer.domElement.addEventListener("pointerdown", (e) => {
+        renderer.domElement._down = { x: e.clientX, y: e.clientY, t: performance.now() };
+        renderer.domElement.style.cursor = "grabbing";
+      });
+      renderer.domElement.addEventListener("pointerup", (e) => {
+        renderer.domElement.style.cursor = mouseInCanvas ? "grab" : "default";
+        const d = renderer.domElement._down;
+        if (!d) return;
+        const moved = Math.hypot(e.clientX - d.x, e.clientY - d.y);
+        if (moved < 6 && performance.now() - d.t < 500) {
+          updateMouseWorld(e.clientX, e.clientY);
+          pointer.x = mouseNdc.x;
+          pointer.y = mouseNdc.y;
+          raycaster.setFromCamera(pointer, camera);
+
+          // Prefer particle hit → burst that route's color
+          const cores = flowParticles.filter((p) => p.visible);
+          const pHits = raycaster.intersectObjects(cores, false);
+          if (pHits.length) {
+            const p = pHits[0].object;
+            const col = p.userData.color;
+            spawnSparks(p.position.clone(), col, 18, 3.2);
+            spawnRipple(col);
+            clickPulse = 1;
+            // Boost nearby particles on same route
+            flowParticles.forEach((q) => {
+              if (q.userData.routeId === p.userData.routeId) q.userData.boost = 1;
+            });
+            return;
+          }
+
+          const hits = raycaster.intersectObjects(pickables, false);
+          if (hits.length && hits[0].object.userData.id) {
+            showDetail(hits[0].object.userData.id);
+            // Also spark at component
+            const id = hits[0].object.userData.id;
+            const col = CATALOG[id]?.color ?? 0x88ccff;
+            spawnSparks(hits[0].point, col, 14, 2.4);
+            clickPulse = 0.8;
+          } else {
+            // Empty space click: attract burst at mouse world point
+            spawnSparks(mouseWorld.clone(), 0x5ec8ff, 16, 2.8);
+            spawnRipple(0x5ec8ff);
+            clickPulse = 0.7;
+            flowParticles.forEach((q) => {
+              if (q.visible && q.position.distanceTo(mouseWorld) < 4) {
+                q.userData.boost = 0.8;
+              }
+            });
+          }
+        }
+      });
+
+      $("tog-flow").addEventListener("change", (e) => { flowGroup.visible = e.target.checked; });
+      $("tog-attract").addEventListener("change", (e) => { attractOn = e.target.checked; });
+      $("tog-ems").addEventListener("change", (e) => { emsLinks.visible = e.target.checked; });
+      $("tog-spin").addEventListener("change", (e) => { controls.autoRotate = e.target.checked; });
+
+      function resize() {
+        const w = wrap.clientWidth, h = wrap.clientHeight;
+        camera.aspect = w / Math.max(h, 1);
+        camera.updateProjectionMatrix();
+        renderer.setSize(w, h);
+        labelRenderer.setSize(w, h);
+      }
+      window.addEventListener("resize", resize);
+      resize();
+
+      // ── Apply sim → scene ────────────────────────────────────────────────
+      function applyVisuals(s, t, dt) {
+        const h = s.hourF;
+        const sunrise = 5.75, sunset = 18.25;
+        let elev = 0;
+        if (h >= sunrise && h <= sunset) elev = Math.sin(Math.PI * (h - sunrise) / (sunset - sunrise));
+        const dayAmt = clamp(elev * 1.4, 0, 1);
+        const nightAmt = 1 - dayAmt;
+
+        // Day / night sky
+        const uiBg = new THREE.Color(0x0b1220);
+        uiBg.lerp(new THREE.Color(0x1a3050), dayAmt * 0.65);
+        if (h > 17.5 && h < 19.5) uiBg.lerp(new THREE.Color(0x2a1840), 0.45);
+        if (h > 5.2 && h < 6.8) uiBg.lerp(new THREE.Color(0x3a2848), 0.3);
+        scene.background.copy(uiBg);
+        scene.fog.color.copy(uiBg);
+        scene.fog.density = 0.014 + nightAmt * 0.008;
+
+        sun.intensity = 0.12 + dayAmt * 1.45;
+        hemi.intensity = 0.18 + dayAmt * 0.45;
+        sun.position.set(
+          Math.cos(((h - 6) / 12) * Math.PI) * 16,
+          2 + elev * 18,
+          Math.sin(((h - 6) / 12) * Math.PI) * 10
+        );
+        sunDisc.position.copy(sun.position).setLength(22);
+        sunDisc.visible = dayAmt > 0.02;
+        sunDisc.material.emissiveIntensity = 0.5 + dayAmt * 1.2;
+        sunDisc.scale.setScalar(0.55 + dayAmt * 0.65);
+        stars.material.opacity = nightAmt * 0.85;
+
+        // PV glow + label
+        const pvN = clamp(s.pv / 75, 0, 1);
+        panelMat.emissiveIntensity = 0.05 + pvN * 0.75;
+        panelMat.color.setHex(pvN > 0.05 ? 0x1a4a8e : 0x0d1a30);
+        cables.pv.mesh.material.emissiveIntensity = 0.05 + pvN * 0.55;
+        lblPv.element.textContent = `PV ${s.pv.toFixed(0)} kW`;
+
+        // Battery + solar charging relationship
+        const socN = (s.soc - SOC_MIN) / (SOC_MAX - SOC_MIN);
+        const charging = s.pBat < -0.4;   // negative = charge (from dispatch)
+        const discharging = s.pBat > 0.4;
+        // Power on the PV→BESS link: only when solar is producing AND battery is charging
+        const chargeKw = (charging && s.pv > 0.5) ? Math.min(-s.pBat, s.pv) : 0;
+        const chargeN = clamp(chargeKw / 50, 0, 1);
+
+        socBar.scale.y = 0.08 + socN * 0.92;
+        const socColor = new THREE.Color().setHSL(0.08 + socN * 0.25, 0.75, 0.5);
+        socBarMat.color.copy(socColor);
+        socBarMat.emissive.copy(socColor);
+        socBarMat.emissiveIntensity = 0.5 + Math.abs(s.pBat) / 65 + chargeN * 0.5;
+        strip.material.emissiveIntensity =
+          0.3 + Math.abs(s.pBat) / 50 + Math.sin(t * 3) * 0.1 + chargeN * 0.6;
+        const batDir = discharging ? "↓ dis" : charging ? "↑ solar chg" : "idle";
+        lblBat.element.textContent = `BESS ${(s.soc * 100).toFixed(0)}% ${batDir}`;
+        cables.bat.mesh.material.emissiveIntensity = 0.05 + Math.abs(s.pBat) / 80;
+
+        // Direct PV → BESS charge feeder
+        cables.pvCharge.mesh.material.emissiveIntensity = 0.06 + chargeN * 0.95;
+        cables.pvCharge.mesh.material.opacity = 1;
+        cables.pvCharge.mesh.scale.setScalar(1 + chargeN * 0.15);
+        chargeInverter.material.emissiveIntensity = 0.15 + chargeN * 1.1 + pvN * 0.2;
+        chargePort.material.emissiveIntensity = 0.25 + chargeN * 1.4;
+        chargePort.scale.setScalar(1 + chargeN * 0.35 + Math.sin(t * 8) * chargeN * 0.08);
+        chargeChevrons.forEach((chev, i) => {
+          chev.material.opacity = 0.15 + chargeN * (0.55 + 0.25 * Math.sin(t * 6 - i * 0.8));
+          chev.material.emissiveIntensity = 0.3 + chargeN * 1.2;
+          chev.scale.setScalar(0.7 + chargeN * 0.8);
+          // March chevrons along the path when charging
+          if (chargeKw > 0.5) {
+            const tPath = ((i / 6) + t * 0.25 * (0.5 + chargeN)) % 1;
+            chev.position.copy(cables.pvCharge.curve.getPoint(tPath));
+            const tan = cables.pvCharge.curve.getTangent(tPath).normalize();
+            chev.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), tan);
+          }
+        });
+        if (chargeKw > 0.5) {
+          lblCharge.element.textContent = `PV → BESS  ${chargeKw.toFixed(0)} kW`;
+          lblCharge.element.style.color = "#d9f99d";
+          lblCharge.element.style.borderColor = "rgba(163,230,53,0.55)";
+          // Occasional intake spark at battery when charge is strong
+          if (Math.random() < dt * 2.5 * chargeN) {
+            spawnSparks(batAnchor.clone().setY(1.2), 0xa3e635, 3, 1.2);
+          }
+        } else {
+          lblCharge.element.textContent = charging
+            ? "Charge link idle (no PV)"
+            : "PV → BESS (standby)";
+          lblCharge.element.style.color = "#86a36a";
+          lblCharge.element.style.borderColor = "rgba(255,255,255,0.12)";
+        }
+        const legCh = $("leg-charge");
+        if (legCh) {
+          legCh.textContent = chargeKw > 0.5 ? `${chargeKw.toFixed(0)} kW` : "standby";
+          legCh.style.color = chargeKw > 0.5 ? "#a3e635" : "";
+        }
+
+        // Diesel
+        const dOn = s.diesel > 0.4;
+        warn.material.emissiveIntensity = dOn ? 0.8 + Math.sin(t * 8) * 0.6 : 0.15;
+        genBody.material.emissiveIntensity = dOn ? 0.35 : 0.08;
+        if (dOn) engine.rotation.x += dt * 10;
+        cables.diesel.mesh.material.emissiveIntensity = dOn ? 0.15 + s.diesel / 60 : 0.04;
+        lblDiesel.element.textContent = dOn ? `Diesel ${s.diesel.toFixed(0)} kW ON` : "Diesel standby";
+        smokes.forEach((sm) => {
+          if (!dOn) { sm.material.opacity = 0; return; }
+          sm.userData.t = (sm.userData.t + dt * 0.45) % 1;
+          const u = sm.userData.t;
+          sm.position.set(0.6, 2.7 + u * 1.8, -0.3);
+          sm.scale.setScalar(0.5 + u * 2);
+          sm.material.opacity = (1 - u) * 0.35 * clamp(s.diesel / 20, 0.3, 1);
+        });
+
+        // Village
+        const loadN = clamp(s.load / 35, 0, 1);
+        const basicN = clamp(s.loadBasic / 25, 0, 1);
+        const prodN = clamp(s.loadProd / 18, 0, 1);
+        activityRing.material.opacity = 0.2 + loadN * 0.7;
+        activityRing.material.emissiveIntensity = 0.2 + loadN * 0.8;
+        activityRing.scale.setScalar(0.85 + loadN * 0.25);
+        houseWindows.forEach((w) => {
+          w.mat.emissiveIntensity = w.productive
+            ? 0.1 + prodN * 1.2 * (dayAmt > 0.15 ? 1 : 0.25)
+            : 0.05 + basicN * (0.3 + nightAmt * 1.1);
+        });
+        lampMat.emissiveIntensity = 0.2 + nightAmt * 1.4;
+        lampLight.intensity = 0.15 + nightAmt * 1.7 + loadN * 0.3;
+        lblLoad.element.textContent = `Load ${s.load.toFixed(0)} kW`;
+        cables.load.mesh.material.emissiveIntensity = 0.08 + loadN * 0.45;
+
+        // ── Energy flow particles: lively + interactive ──────────────────
+        // pvCharge: solar surplus into the battery (only while charging with PV)
+        // bat: discharge = BESS → bus; charge via bus residual still allowed but
+        //      the main visible store path is the dedicated PV → BESS feeder.
+        const routes = {
+          pv: { power: Math.max(0, s.pv - chargeKw * 0.35), reverse: false },
+          bat: {
+            // While solar-charging, keep bus↔bat quiet so attention is on PV→BESS;
+            // while discharging, full flow BESS → bus.
+            power: discharging ? s.pBat : (charging && chargeKw < 0.5 ? -s.pBat : 0),
+            reverse: !discharging && charging && chargeKw < 0.5,
+          },
+          pvCharge: { power: chargeKw, reverse: false }, // PV → battery along charge feeder
+          diesel: { power: s.diesel, reverse: false },
+          load: { power: s.load, reverse: true },
+        };
+        if (clickPulse > 0) clickPulse = Math.max(0, clickPulse - dt * 1.8);
+
+        // Track which particles crossed bus this frame for ripples
+        const _tmp = new THREE.Vector3();
+        const _tan = new THREE.Vector3();
+        const _side = new THREE.Vector3();
+        const _up = new THREE.Vector3(0, 1, 0);
+
+        flowParticles.forEach((p) => {
+          const u = p.userData;
+          const r = routes[u.routeId];
+          const active = r && r.power > 0.25 && flowGroup.visible;
+          p.visible = active;
+          if (!active) {
+            u.trailIdx.forEach((idx) => { trailParticles[idx].visible = false; });
+            return;
+          }
+
+          u.boost = Math.max(0, u.boost - dt * 1.2);
+          const powerN = clamp(r.power / 70, 0, 1);
+          const baseSpd = (0.14 + powerN * 0.72) * u.baseSpeed * (1 + u.boost * 1.4);
+          // Slight speed pulse for life
+          const pulse = 1 + 0.12 * Math.sin(t * 5 + u.phase);
+          const prevT = u.t;
+          u.t = (u.t + baseSpd * pulse * dt) % 1;
+
+          // Arrival at bus end → ripple occasionally
+          const atBusEnd = r.reverse ? (prevT > 0.15 && u.t <= 0.15) : (prevT < 0.85 && u.t >= 0.85);
+          if (atBusEnd && Math.random() < 0.12 + powerN * 0.2) {
+            spawnRipple(u.color);
+            if (Math.random() < 0.35) {
+              spawnSparks(busGroup.position.clone().setY(1.2), u.color, 4, 1.4);
+            }
+          }
+
+          const tt = r.reverse ? 1 - u.t : u.t;
+          // Path position + tangent for orbital offset
+          p.position.copy(u.curve.getPointAt(tt));
+          _tan.copy(u.curve.getTangentAt(tt)).normalize();
+          _side.crossVectors(_tan, _up);
+          if (_side.lengthSq() < 1e-6) _side.set(1, 0, 0);
+          else _side.normalize();
+          const _bin = _tmp.crossVectors(_side, _tan).normalize();
+
+          // Helical orbit around the cable
+          u.orbitAng += u.orbitSpeed * dt * (1 + powerN);
+          const ox = Math.cos(u.orbitAng) * u.orbitR * (0.8 + powerN);
+          const oy = Math.sin(u.orbitAng) * u.orbitR * (0.8 + powerN);
+          p.position.addScaledVector(_side, ox);
+          p.position.addScaledVector(_bin, oy);
+          // Vertical bob
+          p.position.y += 0.05 + Math.sin(t * u.wobble * 3 + u.phase) * 0.04;
+
+          // Mouse attract / repel (interactive)
+          if (attractOn && mouseInCanvas) {
+            const dist = p.position.distanceTo(mouseWorld);
+            if (dist < 3.5 && dist > 0.05) {
+              const pull = _tmp.copy(mouseWorld).sub(p.position).normalize();
+              // Near cursor: attract; very near: mild swirl
+              const strength = (1 - dist / 3.5) * 0.55 * (1 + clickPulse);
+              p.position.addScaledVector(pull, strength * dt * 8);
+              // Speed boost near mouse
+              u.t = (u.t + strength * 0.15 * dt) % 1;
+            }
+          }
+
+          // Hover highlight
+          const isHover = hoverParticle === p;
+          if (isHover) u.boost = Math.max(u.boost, 0.5);
+
+          // Scale / glow
+          const breath = 1 + 0.15 * Math.sin(t * 6 + u.phase);
+          const sc = u.size * (0.65 + powerN * 0.9) * breath * (isHover ? 1.55 : 1) * (1 + u.boost * 0.4);
+          p.scale.setScalar(sc);
+          p.material.opacity = 0.75 + powerN * 0.2 + (isHover ? 0.15 : 0);
+          if (u.halo) {
+            u.halo.scale.setScalar(1.1 + powerN * 0.6 + Math.sin(t * 8 + u.phase) * 0.15);
+            u.halo.material.opacity = 0.15 + powerN * 0.25 + (isHover ? 0.2 : 0);
+          }
+          if (u.ring) {
+            u.ring.rotation.z = t * u.spin + u.phase;
+            u.ring.rotation.x = Math.PI / 2 + Math.sin(t * 2 + u.phase) * 0.3;
+            u.ring.material.opacity = 0.2 + powerN * 0.4 + (isHover ? 0.35 : 0);
+          }
+          p.rotation.y += dt * u.spin;
+          p.rotation.x += dt * 1.5;
+
+          // Trails lag behind on path
+          u.trailIdx.forEach((idx, k) => {
+            const tr = trailParticles[idx];
+            const lagT = (tt - (k + 1) * 0.022 + 1) % 1;
+            tr.position.copy(u.curve.getPointAt(lagT));
+            tr.position.y += 0.04;
+            tr.visible = true;
+            tr.scale.setScalar(sc * (0.7 - k * 0.12));
+            tr.material.opacity = (0.32 - k * 0.06) * (0.5 + powerN);
+          });
+        });
+
+        // Hover HUD
+        if (hoverParticle && hoverParticle.visible) {
+          const u = hoverParticle.userData;
+          const r = routes[u.routeId];
+          const meta = ROUTE_META[u.routeId] || {};
+          const kw = r ? r.power : 0;
+          hoverHud.style.display = "block";
+          hoverHud.innerHTML =
+            `<span style="color:${meta.hex || "#fff"}">●</span> ${meta.name || u.routeId}` +
+            ` &nbsp;·&nbsp; <b>${kw.toFixed(1)} kW</b>`;
+          // Project particle to screen
+          const sp = hoverParticle.position.clone().project(camera);
+          const rect = renderer.domElement.getBoundingClientRect();
+          const sx = (sp.x * 0.5 + 0.5) * rect.width;
+          const sy = (-sp.y * 0.5 + 0.5) * rect.height;
+          hoverHud.style.left = `${sx}px`;
+          hoverHud.style.top = `${sy}px`;
+          // Dim auto-rotate slightly when inspecting
+        } else {
+          hoverHud.style.display = "none";
+        }
+
+        // Sparks physics
+        sparkPool.forEach((sp) => {
+          if (!sp.userData.alive) return;
+          sp.userData.life -= dt;
+          if (sp.userData.life <= 0) {
+            sp.userData.alive = false;
+            sp.visible = false;
+            return;
+          }
+          sp.userData.vel.y -= 4.5 * dt;
+          sp.position.addScaledVector(sp.userData.vel, dt);
+          const lifeN = sp.userData.life / sp.userData.maxLife;
+          sp.material.opacity = lifeN * 0.9;
+          sp.scale.setScalar(0.4 + lifeN * 0.9);
+        });
+
+        // Bus ripples
+        burstRipples.forEach((rip) => {
+          if (rip.userData.life <= 0) { rip.visible = false; return; }
+          rip.userData.life -= dt;
+          const n = rip.userData.life / rip.userData.maxLife;
+          rip.scale.setScalar(0.5 + (1 - n) * 4);
+          rip.material.opacity = n * 0.55;
+          rip.visible = true;
+          rip.position.y = 0.25 + (1 - n) * 0.15;
+        });
+
+        // Ambient dust drifts toward mouse slightly
+        dust.forEach((d) => {
+          const u = d.userData;
+          d.position.x = u.base.x + Math.sin(t * u.speed + u.phase) * u.amp;
+          d.position.y = u.base.y + Math.cos(t * u.speed * 0.7 + u.phase) * u.amp * 0.6;
+          d.position.z = u.base.z + Math.sin(t * u.speed * 1.1 + u.phase * 2) * u.amp;
+          if (attractOn && mouseInCanvas) {
+            const dist = d.position.distanceTo(mouseWorld);
+            if (dist < 5) {
+              d.position.lerp(mouseWorld, 0.008 * (1 - dist / 5));
+            }
+          }
+          d.material.opacity = 0.12 + 0.1 * Math.sin(t * 2 + u.phase) + clickPulse * 0.15;
+          d.visible = flowGroup.visible;
+        });
+
+        // Cable tubes pulse with power
+        Object.keys(cables).forEach((key) => {
+          const r = routes[key];
+          if (!r) return;
+          const n = clamp(r.power / 60, 0, 1);
+          cables[key].mesh.material.emissiveIntensity = 0.08 + n * 0.65 + clickPulse * 0.2;
+        });
+
+        // EMS spin + packets (livelier)
+        emsCore.rotation.y = t * 0.35;
+        emsCore.rotation.x = Math.sin(t * 0.4) * 0.15;
+        emsShell.rotation.y = -t * 0.2;
+        emsShell.rotation.z = t * 0.15;
+        emsGroup.position.y = 5.2 + Math.sin(t * 0.8) * 0.12;
+        emsLight.position.y = emsGroup.position.y;
+        emsLight.intensity = 1.0 + clickPulse * 0.8 + 0.2 * Math.sin(t * 3);
+        orbitNodes.forEach((node, i) => {
+          const ang = node.userData.baseAngle + t * 0.6;
+          const rad = node.userData.radius;
+          node.position.set(Math.cos(ang) * rad, Math.sin(t * 1.2 + i) * 0.25, Math.sin(ang) * rad);
+          node.rotation.x += dt * 2;
+        });
+        packets.forEach((pkt) => {
+          const spd = pkt.userData.speed * (1 + clickPulse);
+          pkt.userData.t = (pkt.userData.t + spd * dt) % 1;
+          pkt.position.copy(pkt.userData.curve.getPoint(pkt.userData.t));
+          pkt.rotation.x += dt * 4;
+          pkt.rotation.y += dt * 5;
+          pkt.scale.setScalar(0.9 + 0.25 * Math.sin(t * 8 + pkt.userData.t * 10) + clickPulse * 0.3);
+        });
+      }
+
+      // 3D render loop — sim time is advanced by startDayCycleLoop() above.
+      // Do not call clock.getElapsedTime() before getDelta() (zeros dt).
+      const clock = new THREE.Clock();
+      let prev3d = performance.now();
+      $("boot").classList.add("hide");
+      setTimeout(() => { try { $("boot").remove(); } catch (_) {} }, 500);
+
+      function animate() {
+        requestAnimationFrame(animate);
+        const now = performance.now();
+        const dt = Math.min((now - prev3d) / 1000, 0.1) || 1 / 60;
+        prev3d = now;
+        const t = clock.getElapsedTime();
+
+        // latest is updated by the independent day-cycle loop
+        applyVisuals(latest, t, dt);
+
+        controls.update();
+        renderer.render(scene, camera);
+        labelRenderer.render(scene, camera);
+      }
+      animate();
+    }
+
+    main().catch((e) => {
+      showError(
+        "3D failed to start: " + (e?.message || e) +
+        "\n\nDouble-click open_viewer.bat:\nC:\\Users\\boaky\\microgrid-ems\\visuals\\open_viewer.bat"
+      );
+      $("boot").classList.add("hide");
+    });
+  </script>
+</body>
+</html>
